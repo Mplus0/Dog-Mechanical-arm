@@ -171,6 +171,7 @@ class VisualServoTaskNode(Node):
         self.declare_parameter("place_wait_after_open_s", 0.8)
         self.declare_parameter("base_adjust_step_m", 0.05)
         self.declare_parameter("base_adjust_y_margin_mm", 40.0)
+        self.declare_parameter("base_adjust_y_threshold_mm", 260.0)
 
         self.auto_start = self.parse_bool(self.get_parameter("auto_start").value)
         self.move_once_only = self.parse_bool(self.get_parameter("move_once_only").value)
@@ -298,6 +299,7 @@ class VisualServoTaskNode(Node):
         self.place_wait_after_open_s = float(self.get_parameter("place_wait_after_open_s").value)
         self.base_adjust_step_m = float(self.get_parameter("base_adjust_step_m").value)
         self.base_adjust_y_margin_mm = float(self.get_parameter("base_adjust_y_margin_mm").value)
+        self.base_adjust_y_threshold_mm = float(self.get_parameter("base_adjust_y_threshold_mm").value)
 
         self.pub_cmd = self.create_publisher(String, "/roarm_m3/cmd", 10)
         self.pub_state = self.create_publisher(String, "/red_block/visual_servo_state", 10)
@@ -548,6 +550,23 @@ class VisualServoTaskNode(Node):
             y = float(base["y"]) + self.grasp_offset_y_mm
         except Exception:
             return False
+
+        if self.base_adjust_y_threshold_mm > 0.0:
+            if y <= -self.base_adjust_y_threshold_mm:
+                self.base_adjust_request = {
+                    "direction": "left",
+                    "step_m": self.base_adjust_step_m,
+                    "reason": "target_y_offset",
+                }
+                return True
+
+            if y >= self.base_adjust_y_threshold_mm:
+                self.base_adjust_request = {
+                    "direction": "right",
+                    "step_m": self.base_adjust_step_m,
+                    "reason": "target_y_offset",
+                }
+                return True
 
         if y <= self.base_y_min + self.base_adjust_y_margin_mm:
             self.base_adjust_request = {
@@ -814,13 +833,12 @@ class VisualServoTaskNode(Node):
         )
         if not ok:
             self.get_logger().error(f"下降前视觉质量不足，停止下降：{reason}")
-            self.enter_state("FAIL")
-            self.publish_state(
+            self.set_task_failed(
+                "descend_target_quality_bad",
                 {
-                    "error": "descend_target_quality_bad",
                     "reason": reason,
                     "descend_done_mm": self.descend_done_mm,
-                }
+                },
             )
             return
 
@@ -841,8 +859,7 @@ class VisualServoTaskNode(Node):
             pixel_v = float(pixel["y"])
         except Exception:
             self.get_logger().error("下降阶段像素信息无效，停止下降。")
-            self.enter_state("FAIL")
-            self.publish_state({"error": "descend_bad_pixel"})
+            self.set_task_failed("descend_bad_pixel")
             return
 
         err_u = self.descend_desired_pixel_u - pixel_u
@@ -858,13 +875,12 @@ class VisualServoTaskNode(Node):
             self.get_logger().error(
                 f"下降目标 z={target_z:.1f} mm 低于安全限制 {self.descend_min_z_mm:.1f} mm，中止。"
             )
-            self.enter_state("FAIL")
-            self.publish_state(
+            self.set_task_failed(
+                "descend_below_safety_limit",
                 {
-                    "error": "descend_below_safety_limit",
                     "target_z": target_z,
                     "min_z": self.descend_min_z_mm,
-                }
+                },
             )
             return
 
@@ -904,13 +920,12 @@ class VisualServoTaskNode(Node):
         )
         if not ok:
             self.get_logger().error(f"下降目标超出工作空间：{reason}")
-            self.enter_state("FAIL")
-            self.publish_state(
+            self.set_task_failed(
+                "descend_out_of_range",
                 {
-                    "error": "descend_out_of_range",
                     "reason": reason,
                     "target": descend_target,
-                }
+                },
             )
             return
 
@@ -1025,8 +1040,7 @@ class VisualServoTaskNode(Node):
         ok, reason = self.check_target_range(target["x"], target["y"], target["z"])
         if not ok:
             self.get_logger().error(f"抬升目标超出工作空间：{reason}")
-            self.enter_state("FAIL")
-            self.publish_state({"error": "lift_out_of_range", "reason": reason, "target": target})
+            self.set_task_failed("lift_out_of_range", {"reason": reason, "target": target})
             return
 
         self.get_logger().info(
@@ -1055,8 +1069,7 @@ class VisualServoTaskNode(Node):
         ok, reason = self.check_target_range(target["x"], target["y"], target["z"])
         if not ok:
             self.get_logger().error(f"放置点超出工作空间：{reason}")
-            self.enter_state("FAIL")
-            self.publish_state({"error": "place_out_of_range", "reason": reason, "target": target})
+            self.set_task_failed("place_out_of_range", {"reason": reason, "target": target})
             return
 
         self.get_logger().info(
@@ -1228,14 +1241,13 @@ class VisualServoTaskNode(Node):
                     self.get_logger().error(
                         f"连续 {self.servo_recover_attempts} 次恢复高度失败，停止视觉闭环。"
                     )
-                    self.enter_state("FAIL")
-                    self.publish_state(
+                    self.set_task_failed(
+                        "servo_recover_failed",
                         {
-                            "error": "servo_recover_failed",
                             "current_pose": pose,
                             "servo_min_z_mm": self.servo_min_z_mm,
                             "recover_attempts": self.servo_recover_attempts,
-                        }
+                        },
                     )
                     return
 
@@ -1263,7 +1275,7 @@ class VisualServoTaskNode(Node):
         try:
             target_eef = self.build_target_eef(target_base)
         except Exception as exc:
-            self.set_task_failed("target_out_of_workspace", {"reason": str(exc)})
+            self.set_task_failed("target_out_of_range", {"reason": str(exc)})
             return
         if fixed_z is not None:
             target_eef["z"] = max(fixed_z, self.servo_min_z_mm)
@@ -1519,6 +1531,9 @@ class VisualServoTaskNode(Node):
 
                 if not self.target_is_fresh():
                     self.get_logger().warn("Target lost after step. Recover and wait/search.")
+                    if self.competition_mode and self.active_task_cmd == "pick":
+                        self.set_task_failed("target_lost")
+                        return
                     self.next_step_decay = 0.6
                     if self.last_safe_servo_pose is not None and self.arm_state_is_fresh():
                         self.publish_recover_servo_height(self.get_pose_from_arm_state())
@@ -1608,10 +1623,19 @@ class VisualServoTaskNode(Node):
             if now - self.last_command_time >= self.lift_wait_s:
                 self.busy = False
                 if self.competition_mode and self.active_task_cmd == "pick":
+                    self.send_initial_pose(b_offset_deg=0.0)
                     self.last_command_time = now
-                    self.enter_state("HOLD_AFTER_PICK")
+                    self.busy = True
+                    self.enter_state("WAIT_AFTER_PICK_RESET")
                     return
                 self.enter_state("MOVE_TO_PLACE")
+            return
+
+        if self.state == "WAIT_AFTER_PICK_RESET":
+            if now - self.last_command_time >= self.initial_wait_s:
+                self.busy = False
+                self.last_command_time = now
+                self.enter_state("HOLD_AFTER_PICK")
             return
 
         if self.state == "HOLD_AFTER_PICK":

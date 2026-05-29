@@ -165,6 +165,7 @@ def generate_launch_description():
                     "lift_up_mm": 80.0,
                     "lift_speed": 0.08,
                     "lift_wait_s": 2.0,
+                    "base_adjust_y_threshold_mm": 260.0,
                     "place_speed": 0.10,
                     "place_wait_s": 2.0,
                 },
