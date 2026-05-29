@@ -282,3 +282,55 @@ ros2 launch red_block_grasp_ros2 visual_servo_task.launch.py --show-args
 - `install/`
 - `log/`
 - `Log/`
+
+## 比赛机械臂 V0 任务模式
+
+比赛 V0 模式只定义机械臂侧接口。机械臂只负责两个动作：
+
+- `pick`：识别红色长条/红色目标，执行视觉伺服靠近、下降、闭爪、抬升，并在抬升后悬空保持 `hold_after_pick_s`（默认 3.2 秒）以上。收到 `pick_success` 表示物料已经抓起、抬升并保持完成。
+- `place_to_zone`：不识别 A/B/C/D，也不识别箱子。默认机械狗已经移动到正确放置箱前并站稳，机械臂执行固定放置点移动、开爪、等待、回安全/初始姿态。收到 `place_success` 表示已经开爪放置并回到安全姿态。
+
+机械狗侧负责移动到抓取区/放置区并站稳；ROS1 bridge 暂时不做，等 ROS2 内部测试稳定后再接。
+
+启动比赛机械臂侧：
+
+```bash
+cd /home/sunrise/dog/ros2_red_block_ws
+colcon build --packages-select red_block_grasp_ros2 --event-handlers console_direct+
+source source_red_block.sh
+ros2 launch red_block_grasp_ros2 competition_arm_task.launch.py show_window:=false
+```
+
+狗端/测试端发送任务：
+
+```bash
+ros2 topic pub --once /dog_arm/task_cmd std_msgs/msg/String "{data: '{\"task_id\":1,\"cmd\":\"pick\"}'}"
+ros2 topic pub --once /dog_arm/task_cmd std_msgs/msg/String "{data: '{\"task_id\":2,\"cmd\":\"place_to_zone\"}'}"
+```
+
+查看结果和左右微调请求：
+
+```bash
+ros2 topic echo /dog_arm/task_result
+ros2 topic echo /dog_arm/base_adjust_req
+```
+
+V0 通信协议：
+
+```json
+{"task_id":1,"cmd":"pick"}
+{"task_id":2,"cmd":"place_to_zone"}
+{"task_id":1,"result":"pick_success"}
+{"task_id":2,"result":"place_success"}
+{"task_id":1,"result":"pick_failed","error":"target_not_found"}
+{"task_id":2,"result":"place_failed","error":"place_motion_failed"}
+```
+
+当目标位于机械臂横向工作空间边缘时，机械臂会请求机械狗只做左右微调：
+
+```json
+{"task_id":1,"direction":"left","step_m":0.05,"reason":"target_too_right"}
+{"task_id":1,"direction":"right","step_m":0.05,"reason":"target_too_left"}
+```
+
+`left/right` 表示机械狗自身坐标系左右横移，不按图像左右定义。V0 不发布前后、上下或其他方向。

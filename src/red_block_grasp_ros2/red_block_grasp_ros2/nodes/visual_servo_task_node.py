@@ -39,6 +39,8 @@ class VisualServoTaskNode(Node):
         # ===== 基础控制 =====
         self.declare_parameter("auto_start", True)
         self.declare_parameter("move_once_only", True)
+        self.declare_parameter("competition_mode", False)
+        self.declare_parameter("visual_servo_cmd_topic", "/red_block/visual_servo_cmd")
 
         # ===== 初始姿态 =====
         self.declare_parameter("init_b_deg", 0.0)
@@ -165,9 +167,15 @@ class VisualServoTaskNode(Node):
         self.declare_parameter("place_z_mm", 120.0)
         self.declare_parameter("place_speed", 0.10)
         self.declare_parameter("place_wait_s", 2.0)
+        self.declare_parameter("hold_after_pick_s", 3.2)
+        self.declare_parameter("place_wait_after_open_s", 0.8)
+        self.declare_parameter("base_adjust_step_m", 0.05)
+        self.declare_parameter("base_adjust_y_margin_mm", 40.0)
 
         self.auto_start = self.parse_bool(self.get_parameter("auto_start").value)
         self.move_once_only = self.parse_bool(self.get_parameter("move_once_only").value)
+        self.competition_mode = self.parse_bool(self.get_parameter("competition_mode").value)
+        self.visual_servo_cmd_topic = str(self.get_parameter("visual_servo_cmd_topic").value)
 
         self.init_pose = {
             "b": float(self.get_parameter("init_b_deg").value),
@@ -286,6 +294,10 @@ class VisualServoTaskNode(Node):
         self.place_z_mm = float(self.get_parameter("place_z_mm").value)
         self.place_speed = float(self.get_parameter("place_speed").value)
         self.place_wait_s = float(self.get_parameter("place_wait_s").value)
+        self.hold_after_pick_s = float(self.get_parameter("hold_after_pick_s").value)
+        self.place_wait_after_open_s = float(self.get_parameter("place_wait_after_open_s").value)
+        self.base_adjust_step_m = float(self.get_parameter("base_adjust_step_m").value)
+        self.base_adjust_y_margin_mm = float(self.get_parameter("base_adjust_y_margin_mm").value)
 
         self.pub_cmd = self.create_publisher(String, "/roarm_m3/cmd", 10)
         self.pub_state = self.create_publisher(String, "/red_block/visual_servo_state", 10)
@@ -300,6 +312,12 @@ class VisualServoTaskNode(Node):
             String,
             "/red_block/target_base",
             self.on_target,
+            10,
+        )
+        self.sub_visual_cmd = self.create_subscription(
+            String,
+            self.visual_servo_cmd_topic,
+            self.on_visual_servo_cmd,
             10,
         )
 
@@ -327,11 +345,19 @@ class VisualServoTaskNode(Node):
         self.center_stable_frames = 0
         self.recovering_after_lost = False
         self.last_move_origin = None
+        self.active_task_id = None
+        self.active_task_cmd = None
+        self.task_result = None
+        self.last_error = None
+        self.base_adjust_request = None
 
         self.timer = self.create_timer(0.2, self.on_timer)
 
         self.get_logger().info("Visual servo task node started.")
         self.get_logger().info("This node only publishes /roarm_m3/cmd. It does not use camera or serial directly.")
+        self.get_logger().info(
+            f"competition_mode={self.competition_mode}, visual_servo_cmd_topic={self.visual_servo_cmd_topic}"
+        )
 
     @staticmethod
     def parse_offsets(text):
@@ -368,6 +394,12 @@ class VisualServoTaskNode(Node):
             "scan_index": self.scan_index,
             "arm_state_age_s": None,
             "target_age_s": None,
+            "competition_mode": self.competition_mode,
+            "task_id": self.active_task_id,
+            "task_cmd": self.active_task_cmd,
+            "task_result": self.task_result,
+            "error": self.last_error,
+            "base_adjust": self.base_adjust_request,
         }
 
         if self.latest_arm_state is not None:
@@ -377,6 +409,15 @@ class VisualServoTaskNode(Node):
             data["target_age_s"] = now - self.latest_target_time
 
         if extra:
+            if "error" in extra:
+                self.last_error = extra["error"]
+                data["error"] = self.last_error
+            if "base_adjust" in extra:
+                self.base_adjust_request = extra["base_adjust"]
+                data["base_adjust"] = self.base_adjust_request
+            if "task_result" in extra:
+                self.task_result = extra["task_result"]
+                data["task_result"] = self.task_result
             data.update(extra)
 
         msg = String()
@@ -422,6 +463,109 @@ class VisualServoTaskNode(Node):
 
         self.latest_target = data
         self.latest_target_time = time.time()
+
+    def on_visual_servo_cmd(self, msg):
+        try:
+            data = json.loads(msg.data)
+        except Exception as exc:
+            self.get_logger().warn(f"Invalid visual servo command JSON: {exc}")
+            return
+
+        cmd = str(data.get("cmd", "")).strip()
+        task_id = data.get("task_id", None)
+
+        if cmd == "pick":
+            self.start_competition_pick(task_id)
+            return
+
+        if cmd == "place_to_zone":
+            self.start_competition_place(task_id)
+            return
+
+        self.get_logger().warn(f"Unsupported visual servo command: {cmd}")
+
+    def reset_task_runtime(self, task_id, task_cmd):
+        self.active_task_id = task_id
+        self.active_task_cmd = task_cmd
+        self.task_result = None
+        self.last_error = None
+        self.base_adjust_request = None
+        self.done = False
+        self.busy = False
+        self.started = False
+        self.scan_index = 0
+        self.last_scan_switch_time = time.time()
+        self.last_command_time = 0.0
+        self.pre_grasp_pose = None
+        self.descend_done_mm = 0.0
+        self.descend_start_z = None
+        self.servo_recover_attempts = 0
+        self.last_safe_servo_pose = None
+        self.next_step_decay = 1.0
+        self.center_stable_frames = 0
+        self.recovering_after_lost = False
+        self.last_move_origin = None
+
+    def start_competition_pick(self, task_id):
+        self.reset_task_runtime(task_id, "pick")
+        self.get_logger().info(f"Competition pick requested. task_id={task_id}")
+        self.enter_state("INIT")
+
+    def start_competition_place(self, task_id):
+        self.reset_task_runtime(task_id, "place_to_zone")
+        self.started = True
+        self.get_logger().info(f"Competition place_to_zone requested. task_id={task_id}")
+        self.enter_state("MOVE_TO_PLACE")
+
+    def set_task_failed(self, error, extra=None):
+        self.last_error = str(error)
+        if self.competition_mode and self.active_task_cmd == "pick":
+            self.task_result = "pick_failed"
+        elif self.competition_mode and self.active_task_cmd == "place_to_zone":
+            self.task_result = "place_failed"
+        self.enter_state("FAIL")
+        data = {"error": self.last_error, "task_result": self.task_result}
+        if extra:
+            data.update(extra)
+        self.publish_state(data)
+
+    def set_task_success(self, result):
+        self.task_result = str(result)
+        self.last_error = None
+        self.done = True
+        self.enter_state("DONE")
+        self.publish_state({"task_result": self.task_result, "result": self.task_result})
+
+    def check_competition_base_adjust_needed(self, target):
+        if not self.competition_mode or self.active_task_cmd != "pick":
+            return False
+
+        base = target.get("base_mm", None)
+        if not isinstance(base, dict):
+            return False
+
+        try:
+            y = float(base["y"]) + self.grasp_offset_y_mm
+        except Exception:
+            return False
+
+        if y <= self.base_y_min + self.base_adjust_y_margin_mm:
+            self.base_adjust_request = {
+                "direction": "left",
+                "step_m": self.base_adjust_step_m,
+                "reason": "target_too_right",
+            }
+            return True
+
+        if y >= self.base_y_max - self.base_adjust_y_margin_mm:
+            self.base_adjust_request = {
+                "direction": "right",
+                "step_m": self.base_adjust_step_m,
+                "reason": "target_too_left",
+            }
+            return True
+
+        return False
 
     def target_is_fresh(self):
         if self.latest_target is None:
@@ -1105,8 +1249,22 @@ class VisualServoTaskNode(Node):
         else:
             self.servo_recover_attempts = 0
 
+        if self.check_competition_base_adjust_needed(self.latest_target):
+            self.get_logger().warn(
+                "Competition pick target is near lateral workspace edge. Request base adjustment."
+            )
+            self.set_task_failed(
+                "need_base_adjust",
+                {"base_adjust": self.base_adjust_request},
+            )
+            return
+
         target_base = self.latest_target["base_mm"]
-        target_eef = self.build_target_eef(target_base)
+        try:
+            target_eef = self.build_target_eef(target_base)
+        except Exception as exc:
+            self.set_task_failed("target_out_of_workspace", {"reason": str(exc)})
+            return
         if fixed_z is not None:
             target_eef["z"] = max(fixed_z, self.servo_min_z_mm)
 
@@ -1285,7 +1443,7 @@ class VisualServoTaskNode(Node):
     def on_timer(self):
         self.publish_state()
 
-        if not self.auto_start:
+        if not self.auto_start and self.active_task_cmd is None:
             return
 
         now = time.time()
@@ -1321,7 +1479,7 @@ class VisualServoTaskNode(Node):
 
                 if self.scan_index >= len(self.b_scan_offsets):
                     self.get_logger().warn("All b scan views tried. Task failed.")
-                    self.enter_state("FAIL")
+                    self.set_task_failed("target_not_found")
                     return
 
                 offset = self.b_scan_offsets[self.scan_index]
@@ -1416,7 +1574,9 @@ class VisualServoTaskNode(Node):
             if now - self.last_command_time >= self.descend_wait_s:
                 self.busy = False
 
-                if self.enable_pick_place_sequence:
+                if self.enable_pick_place_sequence or (
+                    self.competition_mode and self.active_task_cmd == "pick"
+                ):
                     self.get_logger().info("下降完成。进入闭爪阶段。")
                     self.enter_state("CLOSE_GRIPPER")
                 else:
@@ -1447,7 +1607,16 @@ class VisualServoTaskNode(Node):
         if self.state == "WAIT_AFTER_LIFT":
             if now - self.last_command_time >= self.lift_wait_s:
                 self.busy = False
+                if self.competition_mode and self.active_task_cmd == "pick":
+                    self.last_command_time = now
+                    self.enter_state("HOLD_AFTER_PICK")
+                    return
                 self.enter_state("MOVE_TO_PLACE")
+            return
+
+        if self.state == "HOLD_AFTER_PICK":
+            if now - self.last_command_time >= self.hold_after_pick_s:
+                self.set_task_success("pick_success")
             return
 
         if self.state == "MOVE_TO_PLACE":
@@ -1465,8 +1634,17 @@ class VisualServoTaskNode(Node):
             return
 
         if self.state == "WAIT_AFTER_OPEN_GRIPPER":
-            if now - self.last_command_time >= self.gripper_wait_s:
+            wait_s = self.place_wait_after_open_s if (
+                self.competition_mode and self.active_task_cmd == "place_to_zone"
+            ) else self.gripper_wait_s
+            if now - self.last_command_time >= wait_s:
                 self.busy = False
+                if self.competition_mode and self.active_task_cmd == "place_to_zone":
+                    self.send_initial_pose(b_offset_deg=0.0)
+                    self.last_command_time = now
+                    self.busy = True
+                    self.enter_state("WAIT_AFTER_PLACE_RESET")
+                    return
                 self.done = True
                 self.get_logger().info("抓取、抬升、放置流程完成。进入 DONE 状态。")
                 self.enter_state("DONE")
@@ -1475,6 +1653,12 @@ class VisualServoTaskNode(Node):
                         "result": "picked_and_placed",
                     }
                 )
+            return
+
+        if self.state == "WAIT_AFTER_PLACE_RESET":
+            if now - self.last_command_time >= self.initial_wait_s:
+                self.busy = False
+                self.set_task_success("place_success")
             return
 
         if self.state == "DONE":
