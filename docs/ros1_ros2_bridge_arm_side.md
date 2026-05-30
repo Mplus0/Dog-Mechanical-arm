@@ -29,10 +29,14 @@ ros2 launch red_block_grasp_ros2 competition_arm_ros2.launch.py show_window:=fal
 Run `ros1_bridge` on the arm computer and bridge only the three high-level `std_msgs/String` topics:
 
 ```bash
-ros2 run ros1_bridge parameter_bridge \
-  /dog_arm/task_cmd@std_msgs/msg/String@std_msgs/String \
-  /dog_arm/task_result@std_msgs/msg/String@std_msgs/String \
-  /dog_arm/base_adjust_req@std_msgs/msg/String@std_msgs/String
+source /opt/ros/noetic/setup.bash
+source /opt/ros/humble/setup.bash
+
+export ROS_MASTER_URI=http://<狗端ROS1_IP>:11311
+export ROS_IP=<机械臂X5_IP>
+
+rosparam load /home/sunrise/dog/ros2_red_block_ws/src/red_block_grasp_ros2/docs/dog_arm_bridge.yaml
+ros2 run ros1_bridge parameter_bridge
 ```
 
 ## Test from the ROS1 dog side

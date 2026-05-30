@@ -1,0 +1,13 @@
+topics:
+  -
+    topic: /dog_arm/task_cmd
+    type: std_msgs/msg/String
+    queue_size: 10
+  -
+    topic: /dog_arm/task_result
+    type: std_msgs/msg/String
+    queue_size: 10
+  -
+    topic: /dog_arm/base_adjust_req
+    type: std_msgs/msg/String
+    queue_size: 10
