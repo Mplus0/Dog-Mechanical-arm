@@ -1,0 +1,23 @@
+competition_arm_task_node:
+  ros__parameters:
+    task_cmd_topic: "/dog_arm/task_cmd"
+    task_result_topic: "/dog_arm/task_result"
+    base_adjust_req_topic: "/dog_arm/base_adjust_req"
+    visual_servo_cmd_topic: "/red_block/visual_servo_cmd"
+    visual_servo_state_topic: "/red_block/visual_servo_state"
+    pick_timeout_s: 180.0
+    place_timeout_s: 60.0
+    base_adjust_step_m: 0.05
+
+visual_servo_task_node:
+  ros__parameters:
+    competition_mode: true
+    visual_servo_cmd_topic: "/red_block/visual_servo_cmd"
+    hold_after_pick_s: 3.2
+    place_wait_after_open_s: 0.8
+    base_adjust_step_m: 0.05
+    base_adjust_y_margin_mm: 40.0
+    base_adjust_y_threshold_mm: 260.0
+    place_x_mm: 260.0
+    place_y_mm: 180.0
+    place_z_mm: 120.0

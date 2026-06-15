@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -e
+
+WS=/home/sunrise/dog/ros2_red_block_ws
+DATASET=/home/sunrise/dog/ros2_red_block_ws/datasets/red_block_v2_full
+LABELER=$WS/tools/manual_yolo_labeler.py
+
+MODE=${1:-empty}
+
+if [ ! -f "$LABELER" ]; then
+  echo "ERROR: manual_yolo_labeler.py not found:"
+  echo "$LABELER"
+  echo ""
+  echo "Please create the manual labeler script first."
+  exit 1
+fi
+
+if [ ! -d "$DATASET" ]; then
+  echo "ERROR: dataset not found:"
+  echo "$DATASET"
+  exit 1
+fi
+
+cd "$WS"
+
+case "$MODE" in
+  empty)
+    echo "Opening empty-label samples: train"
+    python3 "$LABELER" \
+      --dataset "$DATASET" \
+      --split train \
+      --only-empty
+    ;;
+
+  hard)
+    echo "Opening hard samples: lowconf / no_detection / low confidence"
+    python3 "$LABELER" \
+      --dataset "$DATASET" \
+      --split train \
+      --filter "lowconf,no_detection,force_no_detection,force_conf_0.2,force_conf_0.3,force_conf_0.4,force_conf_0.5"
+    ;;
+
+  train)
+    echo "Opening all train samples"
+    python3 "$LABELER" \
+      --dataset "$DATASET" \
+      --split train
+    ;;
+
+  val)
+    echo "Opening all val samples"
+    python3 "$LABELER" \
+      --dataset "$DATASET" \
+      --split val
+    ;;
+
+  help|-h|--help)
+    echo "Usage:"
+    echo "  biaozhu        Open train empty-label samples"
+    echo "  biaozhu empty  Open train empty-label samples"
+    echo "  biaozhu hard   Open hard samples"
+    echo "  biaozhu train  Open all train samples"
+    echo "  biaozhu val    Open all val samples"
+    echo "  biaozhu help   Show this help"
+    ;;
+
+  *)
+    echo "Unknown mode: $MODE"
+    echo ""
+    echo "Use:"
+    echo "  biaozhu help"
+    exit 1
+    ;;
+esac

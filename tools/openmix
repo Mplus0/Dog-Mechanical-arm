@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -e
+
+WS=/home/sunrise/dog/ros2_red_block_ws
+DATASET=/home/sunrise/dog/ros2_red_block_ws/datasets/red_block_v3_mix
+LABELER=$WS/tools/manual_yolo_labeler.py
+
+MODE=${1:-train}
+
+if [ ! -f "$LABELER" ]; then
+  echo "ERROR: labeler not found:"
+  echo "$LABELER"
+  exit 1
+fi
+
+if [ ! -d "$DATASET" ]; then
+  echo "ERROR: mixed dataset not found:"
+  echo "$DATASET"
+  exit 1
+fi
+
+cd "$WS"
+
+case "$MODE" in
+  train)
+    echo "Open mixed dataset: train"
+    python3 "$LABELER" \
+      --dataset "$DATASET" \
+      --split train
+    ;;
+
+  val)
+    echo "Open mixed dataset: val"
+    python3 "$LABELER" \
+      --dataset "$DATASET" \
+      --split val
+    ;;
+
+  empty-train)
+    echo "Open mixed dataset: empty train labels"
+    python3 "$LABELER" \
+      --dataset "$DATASET" \
+      --split train \
+      --only-empty
+    ;;
+
+  empty-val)
+    echo "Open mixed dataset: empty val labels"
+    python3 "$LABELER" \
+      --dataset "$DATASET" \
+      --split val \
+      --only-empty
+    ;;
+
+  hard)
+    echo "Open mixed dataset: hard samples"
+    python3 "$LABELER" \
+      --dataset "$DATASET" \
+      --split train \
+      --filter "force_conf,lowconf,no_detection,force_no_detection"
+    ;;
+
+  help|-h|--help)
+    echo "Usage:"
+    echo "  openmix              Open mixed train set"
+    echo "  openmix train        Open mixed train set"
+    echo "  openmix val          Open mixed val set"
+    echo "  openmix empty-train  Open empty-label train samples"
+    echo "  openmix empty-val    Open empty-label val samples"
+    echo "  openmix hard         Open force_conf / lowconf / no_detection samples"
+    echo "  openmix help         Show this help"
+    ;;
+
+  *)
+    echo "Unknown mode: $MODE"
+    echo "Use: openmix help"
+    exit 1
+    ;;
+esac
