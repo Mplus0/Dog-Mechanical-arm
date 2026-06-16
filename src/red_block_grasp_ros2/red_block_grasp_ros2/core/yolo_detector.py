@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from ultralytics import YOLO
 
 
@@ -12,6 +12,10 @@ class Detection:
     y1: int
     x2: int
     y2: int
+    depth_mm: float = None
+    valid_depth: bool = False
+    score: float = 0.0
+    debug_info: dict = field(default_factory=dict)
 
     @property
     def center(self):
@@ -113,6 +117,7 @@ class YoloRedBlockDetector:
                     y1=y1,
                     x2=x2,
                     y2=y2,
+                    score=conf,
                 )
             )
 

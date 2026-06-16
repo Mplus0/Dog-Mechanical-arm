@@ -196,7 +196,7 @@ cd /home/sunrise/dog/ros2_red_block_ws
 source /opt/ros/humble/setup.bash
 rosdep install --from-paths src --ignore-src -r -y
 colcon build --packages-select red_block_grasp_ros2 --event-handlers console_direct+
-source install/setup.bash
+source source_red_block.sh
 ```
 
 如果你的路径不是 `/home/sunrise/dog/ros2_red_block_ws`，仍可按实际路径进入工作空间编译：
@@ -210,7 +210,7 @@ source install/setup.bash
 
 注意事项：
 
-- 每打开一个新终端，都需要重新执行 `source /opt/ros/humble/setup.bash` 和 `source install/setup.bash`。
+- 每打开一个新终端，都需要重新执行 `cd /home/sunrise/dog/ros2_red_block_ws && source source_red_block.sh`。
 - 修改 `nodes/`、`core/`、`launch/`、`config/` 后建议重新 `colcon build`。
 - `source_red_block.sh` 写死了 `/home/sunrise/dog/ros2_red_block_ws`，只适合现场同路径环境。
 - Python 脚本如果直接执行，需要检查执行权限：`chmod +x path/to/script.py`。
@@ -223,8 +223,8 @@ source install/setup.bash
 用于确认 Orbbec、YOLO/颜色检测、手眼标定和 `/red_block/target_base` 是否正常。
 
 ```bash
-source /opt/ros/humble/setup.bash
-source install/setup.bash
+cd /home/sunrise/dog/ros2_red_block_ws
+source source_red_block.sh
 ros2 launch red_block_grasp_ros2 localization_only.launch.py show_window:=true
 ```
 
@@ -293,9 +293,8 @@ ros2 topic echo /dog_arm/base_adjust_req
 该方式需要外部官方 `roarm_ws` 提供 `/move_line_cmd`、`/move_joint_cmd` 和 `/gripper_cmd` 等接口。
 
 ```bash
-source /opt/ros/humble/setup.bash
-source /home/sunrise/dog/roarm_ws/install/setup.bash
-source /home/sunrise/dog/ros2_red_block_ws/install/setup.bash
+cd /home/sunrise/dog/ros2_red_block_ws
+source source_red_block.sh
 python3 /home/sunrise/dog/ros2_red_block_ws/dog_visual_grasp_bridge/visual_moveit_grasp.py
 ```
 
@@ -451,8 +450,8 @@ topics:
 机械臂侧启动任务：
 
 ```bash
-source /opt/ros/humble/setup.bash
-source /home/sunrise/dog/ros2_red_block_ws/install/setup.bash
+cd /home/sunrise/dog/ros2_red_block_ws
+source source_red_block.sh
 ros2 launch red_block_grasp_ros2 competition_arm_ros2.launch.py show_window:=false
 ```
 
@@ -632,7 +631,7 @@ tail -f /home/sunrise/dog/ros2_red_block_ws/run_records/<latest_run_file>.jsonl
 
 ```bash
 colcon build --packages-select red_block_grasp_ros2
-source install/setup.bash
+source source_red_block.sh
 ros2 pkg list | grep red_block_grasp_ros2
 ```
 
