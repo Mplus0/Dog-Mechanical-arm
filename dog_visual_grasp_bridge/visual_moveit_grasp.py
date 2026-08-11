@@ -60,6 +60,7 @@ class VisualMoveItGraspNode(Node):
         self.motion_states = {
             "OPEN_GRIPPER",
             "MOVE_TO_PRE_GRASP",
+            "ROTATE_GRIPPER_AT_PRE_GRASP",
             "MOVE_LINE_TO_GRASP",
             "CLOSE_GRIPPER",
             "LIFT",
@@ -297,7 +298,7 @@ class VisualMoveItGraspNode(Node):
         limit = float(self.cfg["stage_target_max_age_s"])
         expired = age_frozen > limit or age_target > limit
         if expired and log_warning:
-            self.get_logger().warn(
+            self.get_logger().debug(
                 f"snapshot 过期: frozen_age={age_frozen:.2f}s target_age={age_target:.2f}s limit={limit:.2f}s"
             )
         return expired
@@ -307,7 +308,7 @@ class VisualMoveItGraspNode(Node):
             return False
         if not self.bool_cfg("allow_snapshot_expire_during_motion"):
             return False
-        self.get_logger().warn("snapshot expired by age but allowed during current motion stage")
+        self.get_logger().debug("snapshot expired by age but allowed during current motion stage")
         return True
 
     def clear_snapshot(self, reset_done_logged=True):
@@ -677,7 +678,40 @@ class VisualMoveItGraspNode(Node):
                 )
             if ok:
                 self.settle_after_motion("MOVE_TO_PRE_GRASP", self.float_cfg("pre_grasp_settle_s", 0.5))
-            self.set_state("MOVE_LINE_TO_GRASP" if ok else "RECOVER", "预抓取位成功" if ok else "预抓取位失败")
+                next_state = "ROTATE_GRIPPER_AT_PRE_GRASP" if self.bool_cfg("enable_rotate_gripper_at_pre_grasp") else "MOVE_LINE_TO_GRASP"
+                self.set_state(next_state, "预抓取位成功")
+            else:
+                self.set_state("RECOVER", "预抓取位失败")
+            return
+
+        if self.state == "ROTATE_GRIPPER_AT_PRE_GRASP":
+            if self.state_action_done:
+                return
+            self.state_action_done = True
+            pre_grasp = grasp_targets["pre_grasp"]
+            grasp_rpy = grasp_targets["grasp_rpy"]
+            self.get_logger().info(
+                "ROTATE_GRIPPER_AT_PRE_GRASP target: "
+                f"mm=({pre_grasp['x_mm']:.1f},{pre_grasp['y_mm']:.1f},{pre_grasp['z_mm']:.1f}) "
+                f"rpy=({grasp_rpy['roll']:.4f},{grasp_rpy['pitch']:.4f},{grasp_rpy['yaw']:.4f})"
+            )
+            ok = self.move_joint_mm(
+                "ROTATE_GRIPPER_AT_PRE_GRASP",
+                pre_grasp["x_mm"],
+                pre_grasp["y_mm"],
+                pre_grasp["z_mm"],
+                grasp_rpy["roll"],
+                grasp_rpy["pitch"],
+                grasp_rpy["yaw"],
+            )
+            if ok:
+                self.settle_after_motion(
+                    "ROTATE_GRIPPER_AT_PRE_GRASP",
+                    self.float_cfg("rotate_gripper_settle_s", 0.4),
+                )
+                self.set_state("MOVE_LINE_TO_GRASP", "夹爪旋转完成")
+            else:
+                self.set_state("RECOVER", "夹爪旋转失败")
             return
 
         if self.state == "MOVE_LINE_TO_GRASP":
@@ -725,6 +759,12 @@ class VisualMoveItGraspNode(Node):
             if self.state_action_done:
                 return
             self.state_action_done = True
+
+            # 抬升前再次发布 0.5，避免抓取过程中夹爪回松
+            hold_value = float(self.cfg.get("gripper_close_value_strong", self.cfg.get("gripper_close_value", 0.5)))
+            self.publish_gripper(hold_value, "LIFT_HOLD_GRIPPER")
+            time.sleep(0.2)
+
             lift = grasp_targets["lift"]
             grasp_rpy = grasp_targets["grasp_rpy"]
             self.get_logger().info(
@@ -745,7 +785,10 @@ class VisualMoveItGraspNode(Node):
             else:
                 ok = self.move_line_mm("LIFT", lift["x_mm"], lift["y_mm"], lift["z_mm"])
             if ok:
+                hold_value = float(self.cfg.get("gripper_close_value_strong", self.cfg.get("gripper_close_value", 0.5)))
+                self.publish_gripper(hold_value, "LIFT_KEEP_GRIPPER_CLOSED")
                 self.settle_after_motion("LIFT", self.float_cfg("lift_settle_s", 0.5))
+                self.publish_gripper(hold_value, "LIFT_KEEP_GRIPPER_CLOSED_AFTER_SETTLE")
             self.set_state("DONE" if ok else "RECOVER", "抬升成功" if ok else "抬升失败")
             return
 

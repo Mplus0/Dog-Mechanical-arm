@@ -171,6 +171,8 @@ class TargetLocalizer:
         T_base_eef = get_base_to_eef(arm_state)
         T_base_camera = T_base_eef @ self.T_eef_camera
         p_base = transform_point(T_base_camera, p_camera)
+        # Empirical zero-plane correction after 3-point XY check.
+        p_base[2] += 100.0
 
         return {
             "pixel": {"x": int(cx), "y": int(cy)},
