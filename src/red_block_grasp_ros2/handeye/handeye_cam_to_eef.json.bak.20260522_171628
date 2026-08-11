@@ -1,0 +1,127 @@
+{
+  "description": "X_eef = T_eef_camera * X_camera. Translation unit: mm.",
+  "csv": "/home/sunrise/dog/camera_ws/handeye_captures/handeye_camera_arm_samples.csv",
+  "sample_count": 22,
+  "yaw_source": "b",
+  "best_method": "TSAI",
+  "T_eef_camera": [
+    [
+      -0.011367926940712758,
+      -0.029360305965576695,
+      0.9995042484505398,
+      -78.78354922092662
+    ],
+    [
+      0.030977275844155088,
+      0.9990787310053237,
+      0.029700128519367708,
+      -76.64090633023443
+    ],
+    [
+      -0.9994554410369407,
+      0.03129954770279524,
+      -0.0104479517253242,
+      9.151813519758626
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "R_cam2eef": [
+    [
+      -0.011367926940712758,
+      -0.029360305965576695,
+      0.9995042484505398
+    ],
+    [
+      0.030977275844155088,
+      0.9990787310053237,
+      0.029700128519367708
+    ],
+    [
+      -0.9994554410369407,
+      0.03129954770279524,
+      -0.0104479517253242
+    ]
+  ],
+  "t_cam2eef_mm": [
+    -78.78354922092662,
+    -76.64090633023443,
+    9.151813519758626
+  ],
+  "quality": {
+    "target_position_std_axis_mm": [
+      2.0917118394793865,
+      4.296345781599458,
+      2.508227937499659
+    ],
+    "target_position_std_norm_mm": 5.396763185552937,
+    "target_position_error_mean_mm": 3.9873563662378158,
+    "target_position_error_max_mm": 18.19176798231467,
+    "target_position_mean_mm": [
+      594.2009903054376,
+      -10.468451598161367,
+      -158.7621705214286
+    ]
+  },
+  "all_methods": [
+    {
+      "method": "TSAI",
+      "t_cam2eef_mm": [
+        -78.78354922092662,
+        -76.64090633023443,
+        9.151813519758626
+      ],
+      "target_position_std_norm_mm": 5.396763185552937,
+      "target_position_error_mean_mm": 3.9873563662378158,
+      "target_position_error_max_mm": 18.19176798231467
+    },
+    {
+      "method": "PARK",
+      "t_cam2eef_mm": [
+        -78.28370428092602,
+        -79.71828642086037,
+        8.529009905658752
+      ],
+      "target_position_std_norm_mm": 5.49384021958871,
+      "target_position_error_mean_mm": 4.346266720742988,
+      "target_position_error_max_mm": 17.237020400882923
+    },
+    {
+      "method": "HORAUD",
+      "t_cam2eef_mm": [
+        -78.29886019163672,
+        -79.72142485850488,
+        8.533507095440944
+      ],
+      "target_position_std_norm_mm": 5.494623263489438,
+      "target_position_error_mean_mm": 4.34751755465824,
+      "target_position_error_max_mm": 17.234036628989507
+    },
+    {
+      "method": "ANDREFF",
+      "t_cam2eef_mm": [
+        -85.03365817922243,
+        -59.34352758846488,
+        7.712826927197612
+      ],
+      "target_position_std_norm_mm": 7.0717982407324405,
+      "target_position_error_mean_mm": 5.6804680847667655,
+      "target_position_error_max_mm": 19.90067435296808
+    },
+    {
+      "method": "DANIILIDIS",
+      "t_cam2eef_mm": [
+        -76.41783139372177,
+        -81.91755085039378,
+        0.7313828292058017
+      ],
+      "target_position_std_norm_mm": 5.771804858371709,
+      "target_position_error_mean_mm": 4.511753789828692,
+      "target_position_error_max_mm": 19.002024342010976
+    }
+  ]
+}

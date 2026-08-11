@@ -1,0 +1,9 @@
+{
+  "note": "Hand-eye calibration result. eye-in-hand. T_eef_camera = gripper_T_camera. method=PARK, sample_count=19. Translation unit: mm, because target_localizer uses depth/base in mm.",
+  "T_eef_camera": [
+    [-0.02886562150612137, -0.0784527866102959, 0.9964998425329256, -68.45339533670282],
+    [ 0.08749405228431167,  0.9928906302429215, 0.08070308042866126, -58.84108759007445],
+    [-0.995746738237152,    0.08951735389792415, -0.021796252916031825, 6.471401249027339],
+    [0.0, 0.0, 0.0, 1.0]
+  ]
+}
