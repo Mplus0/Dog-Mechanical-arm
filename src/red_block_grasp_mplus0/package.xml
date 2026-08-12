@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>red_block_grasp_mplus0</name>
+  <version>0.0.1</version>
+  <description>ROS2 red block grasp project for RoArm-M3</description>
+  <maintainer email="sunrise@example.com">sunrise</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>roarm_msgs</depend>
+  <depend>std_msgs</depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>roarm_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
