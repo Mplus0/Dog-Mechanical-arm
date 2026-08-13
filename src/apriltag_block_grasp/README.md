@@ -147,3 +147,45 @@ ros2 run apriltag_block_grasp apriltag_detection_2d_node --ros-args \
 
 请反馈上述场景各一条 JSON 消息、持续运行日志、窗口截图（若有）以及实际可稳定识别
 的距离和倾角范围。此阶段不判断标签姿态或物块坐标。
+
+## 阶段 2A 前置：探测彩色相机标定参数
+
+阶段 1B 通过后先运行标定参数探针：
+
+```bash
+colcon build --packages-select apriltag_block_grasp --event-handlers console_direct+
+source install/setup.bash
+
+ros2 run apriltag_block_grasp probe_color_calibration
+```
+
+该工具打开当前默认彩色流、读取一帧，然后尝试两条 SDK 标定参数路径：
+
+```text
+color_profile.get_intrinsic/get_distortion
+pipeline.get_camera_param().rgb_intrinsic/rgb_distortion
+```
+
+每条路径的成功或失败都会写入 JSON。探针不会打开深度流、执行 PnP、连接机械臂或
+发送动作，并在输出后立即释放相机。
+
+只有满足以下条件才进入 PnP 实现：
+
+- 至少一个来源同时提供内参和畸变；
+- `fx`、`fy` 为正且所有数值有限；
+- 标定分辨率为当前帧的 `848×530`，或者 SDK 未暴露标定分辨率但确认参数来自当前活动 profile；
+- 输出 `ready_for_pnp=true`。
+
+如果输出 `require_yaml_override=true`，不使用零畸变继续计算；应先获取与当前分辨率
+对应的独立相机标定 YAML。
+
+PnP 使用的 Tag 右手坐标系固定为：
+
+```text
+原点：有效黑色区域中心
++X：图案左 → 右
++Y：图案上 → 下
++Z：标签正面 → 标签背面（远离相机）
+```
+
+请反馈探针的完整 JSON 输出。

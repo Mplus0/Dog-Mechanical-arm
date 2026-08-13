@@ -22,6 +22,7 @@ class OrbbecColorCamera:
     def __init__(self) -> None:
         self.pipeline: Optional[Pipeline] = None
         self.config: Optional[Config] = None
+        self.color_profile = None
 
     @property
     def started(self) -> bool:
@@ -40,6 +41,7 @@ class OrbbecColorCamera:
 
         self.pipeline = pipeline
         self.config = config
+        self.color_profile = profile
 
     def read(self, timeout_ms: int = 300) -> Optional[ColorFrame]:
         if self.pipeline is None:
@@ -57,6 +59,7 @@ class OrbbecColorCamera:
         pipeline = self.pipeline
         self.pipeline = None
         self.config = None
+        self.color_profile = None
         if pipeline is not None:
             pipeline.stop()
 
