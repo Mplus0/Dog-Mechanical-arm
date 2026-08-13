@@ -42,13 +42,16 @@ class AprilTagPoseEstimator:
         self.calibration = calibration
 
         half = self.tag_size_mm / 2.0
-        # Detector order is canonical tag TL, TR, BR, BL.
+        # The physical tag sheets used by this project are rotated 180 degrees
+        # in-plane relative to OpenCV's decoded marker corner convention. In
+        # project coordinates, detector corners 0..3 therefore correspond to
+        # printed bottom-right, bottom-left, top-left, top-right.
         self.project_object_points = np.array(
             [
-                [-half, -half, 0.0],
-                [half, -half, 0.0],
                 [half, half, 0.0],
                 [-half, half, 0.0],
+                [-half, -half, 0.0],
+                [half, -half, 0.0],
             ],
             dtype=np.float64,
         )
@@ -62,7 +65,10 @@ class AprilTagPoseEstimator:
             ],
             dtype=np.float64,
         )
-        self.ippe_native_from_project = np.diag([1.0, -1.0, -1.0])
+        # Maps the confirmed project convention (+X printed right, +Y printed
+        # down, +Z through the sheet away from the observer) into IPPE's native
+        # square convention for the supplied detector corner order.
+        self.ippe_native_from_project = np.diag([-1.0, 1.0, -1.0])
 
     def estimate(self, detection: AprilTagDetection2D) -> AprilTagPose:
         image_points = np.asarray(detection.corners, dtype=np.float64).reshape(4, 2)
