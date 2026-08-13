@@ -42,3 +42,53 @@ ros2 run apriltag_block_grasp check_environment --json
 `opencv_apriltag_25h9` 或 `opencv_ippe_square` 显示 `WARN` 不代表基础环境检查
 失败：后续分别允许使用专用 AprilTag 检测器或普通 PnP 回退。任何标为 `required`
 的项目显示 `FAIL` 时，不进入阶段 1。
+
+## 阶段 1A：只检查 Orbbec 彩色取流
+
+阶段 0 全部通过后，可以运行：
+
+```bash
+colcon build --packages-select apriltag_block_grasp --event-handlers console_direct+
+source install/setup.bash
+
+ros2 run apriltag_block_grasp color_camera_check_node --ros-args \
+  -p show_window:=false
+```
+
+该节点只打开 Orbbec 彩色流，不读取深度、不检测 AprilTag、不连接机械臂，也不会发送
+任何运动命令。它每隔约 2 秒发布并打印一次状态：
+
+```text
+/apriltag_grasp/camera_status
+```
+
+另一个终端可执行：
+
+```bash
+ros2 topic echo /apriltag_grasp/camera_status
+```
+
+本地有图形桌面时，可以单独测试窗口：
+
+```bash
+ros2 run apriltag_block_grasp color_camera_check_node --ros-args \
+  -p show_window:=true
+```
+
+按 `q`、`Esc` 或在终端按 `Ctrl+C` 退出。退出日志应出现：
+
+```text
+Orbbec color stream stopped.
+```
+
+阶段 1A 通过标准：
+
+- `valid=true` 持续发布；
+- `width`、`height`、`format` 是稳定的实际值；
+- `average_fps` 持续大于 0；
+- `empty_frame_count` 和 `decode_failure_count` 不持续快速增加；
+- `arm_connected=false`、`motion_commands_enabled=false`；
+- `Ctrl+C` 后相机正常释放，节点可再次启动。
+
+请反馈启动至稳定运行至少 10 秒的完整终端日志、一条
+`/apriltag_grasp/camera_status` 消息，以及停止后第二次启动是否成功。窗口测试为可选项。

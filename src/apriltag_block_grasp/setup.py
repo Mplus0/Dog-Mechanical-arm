@@ -21,6 +21,7 @@ setup(
     entry_points={
         "console_scripts": [
             "check_environment = apriltag_block_grasp.tools.check_environment:main",
+            "color_camera_check_node = apriltag_block_grasp.nodes.color_camera_check_node:main",
         ],
     },
 )

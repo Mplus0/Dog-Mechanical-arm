@@ -1,0 +1,1 @@
+"""Camera and perception primitives."""
