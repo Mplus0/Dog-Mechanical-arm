@@ -14,12 +14,7 @@
     "r": null,
     "g": null
   },
-  "observation_move_order": [
-    "b",
-    "t",
-    "s",
-    "e"
-  ],
+  "observation_move_order": ["b", "t", "s", "e"],
   "observation_speed_deg_s": 35.0,
   "observation_acceleration": 35.0,
   "observation_command_interval_s": 0.1,
@@ -46,18 +41,9 @@
     "minimum_wait_s": 0.8,
     "motion_timeout_s": 8.0,
     "workspace_mm": {
-      "x": [
-        80.0,
-        700.0
-      ],
-      "y": [
-        -450.0,
-        450.0
-      ],
-      "z": [
-        -150.0,
-        380.0
-      ]
+      "x": [80.0, 700.0],
+      "y": [-450.0, 450.0],
+      "z": [-150.0, 380.0]
     }
   },
   "pick_sequence": {
@@ -68,7 +54,7 @@
       "speed": {
         "approach": 0.08,
         "final_grasp": 0.08,
-        "lift": 0.1
+        "lift": 0.10
       },
       "maximum_segment_mm": 120.0,
       "position_tolerance_mm": 25.0,
@@ -76,18 +62,9 @@
       "minimum_wait_s": 0.8,
       "motion_timeout_s": 8.0,
       "workspace_mm": {
-        "x": [
-          80.0,
-          700.0
-        ],
-        "y": [
-          -450.0,
-          450.0
-        ],
-        "z": [
-          -150.0,
-          380.0
-        ]
+        "x": [80.0, 700.0],
+        "y": [-450.0, 450.0],
+        "z": [-150.0, 380.0]
       }
     },
     "close_gripper": {
@@ -102,19 +79,10 @@
   },
   "b_search": {
     "status": "approved_for_stage_4_field_calibration",
-    "offsets_deg": [
-      0.0,
-      -5.0,
-      5.0,
-      -10.0,
-      10.0
-    ],
+    "offsets_deg": [0.0, -5.0, 5.0, -10.0, 10.0],
     "command_speed_deg_s": 10.0,
     "command_acceleration": 10.0,
-    "driver_absolute_range_deg": [
-      -20.0,
-      20.0
-    ],
+    "driver_absolute_range_deg": [-20.0, 20.0],
     "driver_maximum_single_delta_deg": 10.0,
     "arrival_tolerance_deg": 2.0,
     "arrival_stable_samples": 3,

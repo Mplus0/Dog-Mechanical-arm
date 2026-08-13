@@ -16,9 +16,9 @@
     ]
   },
   "final_grasp_tcp_offset_base_mm": [
-    20.504508747021873,
-    47.99885103264794,
-    -52.3549446065343
+    -13.120259852978137,
+    49.86477861264794,
+    95.2414029534657
   ],
   "pre_grasp": {
     "z_offset_from_final_mm": 120.0,
@@ -62,16 +62,16 @@
     "Validate at multiple block positions before enabling automatic descent or gripper closure."
   ],
   "last_manual_compensation": {
-    "saved_at_local": "2026-08-14T03:09:44.207865+08:00",
+    "saved_at_local": "2026-08-14T02:55:11.441007+08:00",
     "automatic_xyz_mm": [
-      293.3234755,
-      -3.149789092,
-      86.73502114
+      241.1831121,
+      -5.55053351,
+      -159.1699098
     ],
     "corrected_xyz_mm": [
-      326.9482441,
-      -5.015716672,
-      -60.86132642
+      281.1428999,
+      -6.470159015,
+      52.66391063
     ],
     "manual_trim_mm": [
       0.0,
@@ -79,9 +79,9 @@
       0.0
     ],
     "result_offset_mm": [
-      20.504508747021873,
-      47.99885103264794,
-      -52.3549446065343
+      -13.120259852978137,
+      49.86477861264794,
+      95.2414029534657
     ],
     "tool_sent_motion_commands": false
   }
