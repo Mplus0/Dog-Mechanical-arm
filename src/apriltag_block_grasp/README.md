@@ -92,3 +92,58 @@ Orbbec color stream stopped.
 
 请反馈启动至稳定运行至少 10 秒的完整终端日志、一条
 `/apriltag_grasp/camera_status` 消息，以及停止后第二次启动是否成功。窗口测试为可选项。
+
+## 阶段 1B：只检查 tag25h9 二维检测
+
+阶段 1A 通过后，将打印的 ID 0、1 标签放入相机画面并运行：
+
+```bash
+colcon build --packages-select apriltag_block_grasp --event-handlers console_direct+
+source install/setup.bash
+
+ros2 run apriltag_block_grasp apriltag_detection_2d_node --ros-args \
+  -p show_window:=false \
+  -p save_images:=false
+```
+
+另一个终端查看二维结果：
+
+```bash
+ros2 topic echo /apriltag_grasp/detections_2d
+```
+
+节点只检测 `tag25h9` 的 ID 0、1，发布每个标签的中心、四角点、像素面积和周长。
+它不读取深度、不执行 PnP、不读取机械臂状态，也不会发送运动命令。
+
+有图形桌面时可显示检测框、角点序号和中心点：
+
+```bash
+ros2 run apriltag_block_grasp apriltag_detection_2d_node --ros-args \
+  -p show_window:=true \
+  -p save_images:=false
+```
+
+如需保存标注图，显式设置：
+
+```bash
+-p save_images:=true
+```
+
+默认保存目录为：
+
+```text
+~/.ros/apriltag_block_grasp/detection_2d/
+```
+
+阶段 1B 需要分别测试：
+
+1. 画面中无标签：`count=0`、`reason=no_allowed_tag`；
+2. 只有 ID 0：`count=1` 且 `tag_id=0`；
+3. 只有 ID 1：`count=1` 且 `tag_id=1`；
+4. ID 0、1 同时出现：`count=2`，输出顺序为 0、1；
+5. 将其他已打印 ID 放入画面：它们只能出现在 `ignored_ids`，不能进入 `detections`；
+6. 标签靠近画面四周并改变观察距离/倾角，记录漏检范围和实际 FPS；
+7. `Ctrl+C` 后相机释放，再次启动成功。
+
+请反馈上述场景各一条 JSON 消息、持续运行日志、窗口截图（若有）以及实际可稳定识别
+的距离和倾角范围。此阶段不判断标签姿态或物块坐标。
