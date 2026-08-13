@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
-"""Persistent read-only RoArm-M3 ROS 2 serial driver.
+"""Persistent RoArm-M3 ROS 2 serial driver with a gated hold diagnostic.
 
-This first hardware-validation version deliberately has no serial write path.
-It opens the controller once, publishes fresh T=1051 feedback, and rejects all
-commands so serial-open reset behaviour can be observed independently.
+Normal operation is read-only.  An explicit startup parameter plus an exact
+confirmation message can authorize one T=1041 command whose target is copied
+verbatim from fresh, stable T=1051 feedback.  No user-supplied pose is accepted.
 """
 
+from collections import deque
 import json
 import math
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
-from apriltag_block_grasp.core.roarm_serial_readonly import RoArmSerialStateReader
+from apriltag_block_grasp.core.roarm_serial_control import RoArmCartesianController
+
+
+HOLD_TEST_COMMAND_TYPE = "diagnostic_hold_current_pose"
+HOLD_TEST_CONFIRMATION = "I_ACCEPT_SINGLE_T1041_HOLD_TEST"
 
 
 class RoArmDriverNode(Node):
@@ -32,12 +37,54 @@ class RoArmDriverNode(Node):
         self.declare_parameter("command_topic", "/roarm_m3/cmd")
         self.declare_parameter("state_publish_period_s", 0.2)
         self.declare_parameter("state_stale_timeout_s", 1.0)
+        self.declare_parameter("hold_test_report_topic", "/apriltag_grasp/hold_test_report")
+        self.declare_parameter("enable_diagnostic_hold_test", False)
+        self.declare_parameter("hold_test_min_uptime_s", 5.0)
+        self.declare_parameter("hold_test_max_state_age_s", 0.25)
+        self.declare_parameter("hold_test_stability_window_s", 1.0)
+        self.declare_parameter("hold_test_min_stability_samples", 10)
+        self.declare_parameter("hold_test_max_xyz_peak_to_peak_mm", 1.0)
+        self.declare_parameter("hold_test_max_angle_peak_to_peak_rad", 0.01)
+        self.declare_parameter("hold_test_trace_duration_s", 12.0)
+        self.declare_parameter("hold_test_trace_interval_s", 0.25)
 
         self.port = str(self.get_parameter("port").value)
         self.state_topic = str(self.get_parameter("state_topic").value)
         self.command_topic = str(self.get_parameter("command_topic").value)
+        self.hold_test_report_topic = str(
+            self.get_parameter("hold_test_report_topic").value
+        )
+        self.enable_diagnostic_hold_test = bool(
+            self.get_parameter("enable_diagnostic_hold_test").value
+        )
         self.state_stale_timeout_s = self._positive_parameter(
             "state_stale_timeout_s"
+        )
+        self.hold_test_min_uptime_s = self._positive_parameter(
+            "hold_test_min_uptime_s"
+        )
+        self.hold_test_max_state_age_s = self._positive_parameter(
+            "hold_test_max_state_age_s"
+        )
+        self.hold_test_stability_window_s = self._positive_parameter(
+            "hold_test_stability_window_s"
+        )
+        self.hold_test_min_stability_samples = int(
+            self.get_parameter("hold_test_min_stability_samples").value
+        )
+        if self.hold_test_min_stability_samples < 2:
+            raise ValueError("hold_test_min_stability_samples must be at least 2")
+        self.hold_test_max_xyz_p2p_mm = self._positive_parameter(
+            "hold_test_max_xyz_peak_to_peak_mm"
+        )
+        self.hold_test_max_angle_p2p_rad = self._positive_parameter(
+            "hold_test_max_angle_peak_to_peak_rad"
+        )
+        self.hold_test_trace_duration_s = self._positive_parameter(
+            "hold_test_trace_duration_s"
+        )
+        self.hold_test_trace_interval_s = self._positive_parameter(
+            "hold_test_trace_interval_s"
         )
         publish_period_s = self._positive_parameter("state_publish_period_s")
         settle_time_s = self._nonnegative_parameter("serial_settle_time_s")
@@ -46,12 +93,15 @@ class RoArmDriverNode(Node):
         if baudrate <= 0:
             raise ValueError("baudrate must be positive")
 
-        self.reader = RoArmSerialStateReader(
+        self.reader = RoArmCartesianController(
             port=self.port,
             baudrate=baudrate,
             timeout_s=serial_timeout_s,
         )
         self.publisher = self.create_publisher(String, self.state_topic, 10)
+        self.hold_test_report_publisher = self.create_publisher(
+            String, self.hold_test_report_topic, 10
+        )
         self.subscription = self.create_subscription(
             String, self.command_topic, self._on_command, 10
         )
@@ -61,25 +111,37 @@ class RoArmDriverNode(Node):
         self._reader_thread: Optional[threading.Thread] = None
         self._latest_state: Optional[Dict[str, Any]] = None
         self._latest_state_monotonic: Optional[float] = None
+        self._state_history: Deque[Tuple[float, Dict[str, Any]]] = deque(maxlen=500)
         self._state_frame_count = 0
         self._empty_read_count = 0
         self._read_error: Optional[str] = None
         self._rejected_command_count = 0
         self._serial_open_count = 0
         self._serial_bytes_transmitted = 0
+        self._hold_test_attempted = False
+        self._hold_test_command_sent = False
+        self._hold_test: Optional[Dict[str, Any]] = None
+        self._hold_test_report: Optional[Dict[str, Any]] = None
+        self._last_hold_report_publish_monotonic = 0.0
         self._started_monotonic = time.monotonic()
 
         self.get_logger().warning(
             "Opening the RoArm serial port once. The ESP32/OLED may reset during "
-            "this initial open; no motion command will be transmitted."
+            "this initial open; no motion command is sent automatically."
         )
         self.reader.connect(settle_time_s=settle_time_s)
         self._serial_open_count = 1
         self.get_logger().info(
-            "RoArm serial connection is persistent and read-only: "
+            "RoArm serial connection is persistent; normal command handling is "
+            "read-only: "
             f"port={self.port}, command_topic={self.command_topic}, "
             f"state_topic={self.state_topic}."
         )
+        if self.enable_diagnostic_hold_test:
+            self.get_logger().warning(
+                "Single hold-current-pose diagnostic is ARMED. It still requires "
+                f"type={HOLD_TEST_COMMAND_TYPE!r} and the exact confirmation token."
+            )
 
         self._reader_thread = threading.Thread(
             target=self._read_loop,
@@ -121,21 +183,208 @@ class RoArmDriverNode(Node):
                 self._latest_state = dict(state)
                 self._latest_state_monotonic = time.monotonic()
                 self._state_frame_count += 1
+                self._state_history.append(
+                    (self._latest_state_monotonic, dict(state))
+                )
+                self._capture_hold_test_sample_locked(
+                    self._latest_state_monotonic, state
+                )
 
     def _on_command(self, msg: String) -> None:
-        self._rejected_command_count += 1
-        command_type = None
-        parse_error = None
+        command: Any = None
         try:
             command = json.loads(msg.data)
-            if isinstance(command, dict):
-                command_type = command.get("type", command.get("T"))
         except Exception as exc:
-            parse_error = f"{type(exc).__name__}: {exc}"
+            self._reject_command(None, f"invalid_json: {type(exc).__name__}: {exc}")
+            return
+        if not isinstance(command, dict):
+            self._reject_command(None, "command_must_be_json_object")
+            return
+        command_type = command.get("type")
+        if command_type != HOLD_TEST_COMMAND_TYPE:
+            self._reject_command(command_type, "unsupported_command_type")
+            return
+        if not self.enable_diagnostic_hold_test:
+            self._reject_command(command_type, "diagnostic_hold_test_not_enabled")
+            return
+        if command.get("confirmation") != HOLD_TEST_CONFIRMATION:
+            self._reject_command(command_type, "confirmation_token_mismatch")
+            return
+        if self._hold_test_attempted:
+            self._reject_command(command_type, "hold_test_already_attempted")
+            return
+
+        self._hold_test_attempted = True
+        preflight = self._hold_test_preflight()
+        if not preflight["valid"]:
+            self._hold_test_report = {
+                "tool": "apriltag_block_grasp.roarm_driver_hold_test",
+                "valid": False,
+                "reason": "preflight_rejected",
+                "preflight": preflight,
+                "motion_command_sent": False,
+            }
+            self._publish_hold_test_report(force=True)
+            self.get_logger().error(
+                "Hold-current-pose diagnostic rejected by preflight; restart "
+                "the node before any new attempt."
+            )
+            return
+
+        initial_state = dict(preflight["selected_state"])
+        try:
+            sent_command = self.reader.send_cartesian_command(
+                x_mm=float(initial_state["x"]),
+                y_mm=float(initial_state["y"]),
+                z_mm=float(initial_state["z"]),
+                pitch_rad=float(initial_state["tit"]),
+                roll_rad=float(initial_state["r"]),
+                gripper_rad=float(initial_state["g"]),
+            )
+        except Exception as exc:
+            self._serial_bytes_transmitted = self.reader.transmitted_byte_count
+            self._hold_test_report = {
+                "tool": "apriltag_block_grasp.roarm_driver_hold_test",
+                "valid": False,
+                "reason": "serial_send_failed",
+                "preflight": preflight,
+                "error": f"{type(exc).__name__}: {exc}",
+                "motion_command_sent": self._serial_bytes_transmitted > 0,
+                "serial_bytes_transmitted": self._serial_bytes_transmitted,
+            }
+            self._publish_hold_test_report(force=True)
+            return
+
+        sent_monotonic = time.monotonic()
+        self._serial_bytes_transmitted = self.reader.transmitted_byte_count
+        self._hold_test_command_sent = True
+        with self._state_lock:
+            self._hold_test = {
+                "sent_monotonic": sent_monotonic,
+                "initial_state": initial_state,
+                "sent_command": sent_command,
+                "preflight": preflight,
+                "trace": [
+                    {
+                        "elapsed_s": 0.0,
+                        "state": self._compact_pose_state(initial_state),
+                    }
+                ],
+                "last_trace_monotonic": sent_monotonic,
+            }
         self.get_logger().warning(
-            "Rejected /roarm_m3/cmd because motion_commands_enabled=false: "
-            f"command_type={command_type!r}, parse_error={parse_error!r}."
+            "Sent exactly one T=1041 hold-current-pose diagnostic command; "
+            "all further commands remain disabled."
         )
+
+    def _reject_command(self, command_type: Any, reason: str) -> None:
+        self._rejected_command_count += 1
+        self.get_logger().warning(
+            f"Rejected /roarm_m3/cmd: command_type={command_type!r}, reason={reason}."
+        )
+
+    @staticmethod
+    def _finite_state_value(state: Dict[str, Any], key: str) -> float:
+        if key not in state:
+            raise KeyError(f"state is missing {key!r}")
+        value = float(state[key])
+        if not math.isfinite(value):
+            raise ValueError(f"state.{key} must be finite")
+        return value
+
+    @classmethod
+    def _compact_pose_state(cls, state: Dict[str, Any]) -> Dict[str, float]:
+        return {
+            key: cls._finite_state_value(state, key)
+            for key in ("x", "y", "z", "tit", "b", "s", "e", "t", "r", "g")
+            if key in state
+        }
+
+    def _hold_test_preflight(self) -> Dict[str, Any]:
+        now = time.monotonic()
+        uptime_s = now - self._started_monotonic
+        with self._state_lock:
+            latest = None if self._latest_state is None else dict(self._latest_state)
+            latest_time = self._latest_state_monotonic
+            history = [
+                dict(state)
+                for timestamp, state in self._state_history
+                if timestamp >= now - self.hold_test_stability_window_s
+            ]
+            read_error = self._read_error
+        reasons: List[str] = []
+        age_s = None if latest_time is None else max(0.0, now - latest_time)
+        if uptime_s < self.hold_test_min_uptime_s:
+            reasons.append("driver_uptime_too_short")
+        if read_error is not None:
+            reasons.append("serial_read_error")
+        if latest is None or age_s is None:
+            reasons.append("no_current_state")
+        elif age_s > self.hold_test_max_state_age_s:
+            reasons.append("current_state_stale")
+        if len(history) < self.hold_test_min_stability_samples:
+            reasons.append("insufficient_stability_samples")
+
+        required_keys = ("x", "y", "z", "tit", "r", "g")
+        statistics: Dict[str, Any] = {}
+        try:
+            if latest is not None:
+                for key in required_keys:
+                    self._finite_state_value(latest, key)
+            for key in required_keys:
+                values = [self._finite_state_value(state, key) for state in history]
+                if not values:
+                    continue
+                peak_to_peak = max(values) - min(values)
+                limit = (
+                    self.hold_test_max_xyz_p2p_mm
+                    if key in ("x", "y", "z")
+                    else self.hold_test_max_angle_p2p_rad
+                )
+                statistics[key] = {
+                    "count": len(values),
+                    "min": min(values),
+                    "max": max(values),
+                    "peak_to_peak": peak_to_peak,
+                    "limit": limit,
+                }
+                if peak_to_peak > limit:
+                    reasons.append(f"unstable_{key}")
+        except (KeyError, TypeError, ValueError) as exc:
+            reasons.append(f"invalid_state: {type(exc).__name__}: {exc}")
+
+        return {
+            "valid": not reasons,
+            "reasons": reasons,
+            "driver_uptime_s": uptime_s,
+            "minimum_driver_uptime_s": self.hold_test_min_uptime_s,
+            "state_age_s": age_s,
+            "maximum_state_age_s": self.hold_test_max_state_age_s,
+            "stability_window_s": self.hold_test_stability_window_s,
+            "stability_sample_count": len(history),
+            "minimum_stability_sample_count": self.hold_test_min_stability_samples,
+            "stability": statistics,
+            "selected_state": latest,
+        }
+
+    def _capture_hold_test_sample_locked(
+        self, timestamp: float, state: Dict[str, Any]
+    ) -> None:
+        test = self._hold_test
+        if test is None or self._hold_test_report is not None:
+            return
+        elapsed_s = timestamp - float(test["sent_monotonic"])
+        if elapsed_s < 0.0 or elapsed_s > self.hold_test_trace_duration_s:
+            return
+        if (
+            timestamp - float(test["last_trace_monotonic"])
+            < self.hold_test_trace_interval_s
+        ):
+            return
+        test["trace"].append(
+            {"elapsed_s": elapsed_s, "state": self._compact_pose_state(state)}
+        )
+        test["last_trace_monotonic"] = timestamp
 
     @staticmethod
     def _normalize_state(state: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -150,8 +399,88 @@ class RoArmDriverNode(Node):
                 output[key] = value
         return output
 
+    def _finalize_hold_test_if_due(self, now_monotonic: float) -> None:
+        with self._state_lock:
+            test = self._hold_test
+            if test is None or self._hold_test_report is not None:
+                return
+            elapsed_s = now_monotonic - float(test["sent_monotonic"])
+            if elapsed_s < self.hold_test_trace_duration_s:
+                return
+            trace = list(test["trace"])
+            initial_state = dict(test["initial_state"])
+            sent_command = dict(test["sent_command"])
+            preflight = dict(test["preflight"])
+        pose_keys = ("x", "y", "z", "tit", "r", "g")
+        initial_pose = self._compact_pose_state(initial_state)
+        final_pose = None if not trace else dict(trace[-1]["state"])
+        deltas: Optional[Dict[str, float]] = None
+        extrema: Dict[str, Any] = {}
+        if final_pose is not None:
+            deltas = {
+                key: float(final_pose[key]) - float(initial_pose[key])
+                for key in pose_keys
+            }
+            for key in pose_keys:
+                values = [float(item["state"][key]) for item in trace]
+                extrema[key] = {
+                    "min": min(values),
+                    "max": max(values),
+                    "peak_to_peak": max(values) - min(values),
+                    "maximum_absolute_delta_from_initial": max(
+                        abs(value - float(initial_pose[key])) for value in values
+                    ),
+                }
+        report = {
+            "tool": "apriltag_block_grasp.roarm_driver_hold_test",
+            "valid": bool(trace),
+            "reason": "trace_complete" if trace else "no_feedback_after_command",
+            "test_definition": (
+                "one T=1041 target copied exactly from fresh stable T=1051 "
+                "x/y/z/tit/r/g feedback on the same persistent serial connection"
+            ),
+            "user_supplied_pose_accepted": False,
+            "motion_command_sent": True,
+            "transmitted_command_count": self.reader.transmitted_command_count,
+            "serial_bytes_transmitted": self.reader.transmitted_byte_count,
+            "preflight": preflight,
+            "initial_state": initial_pose,
+            "sent_command": sent_command,
+            "trace_duration_s": self.hold_test_trace_duration_s,
+            "trace_sample_count": len(trace),
+            "trace": trace,
+            "final_state": final_pose,
+            "final_delta_from_initial": deltas,
+            "trace_extrema": extrema,
+        }
+        with self._state_lock:
+            if self._hold_test_report is None:
+                self._hold_test_report = report
+        self.get_logger().warning(
+            "Hold-current-pose diagnostic trace is complete; inspect "
+            f"{self.hold_test_report_topic}."
+        )
+
+    def _publish_hold_test_report(self, force: bool = False) -> None:
+        with self._state_lock:
+            report = (
+                None
+                if self._hold_test_report is None
+                else dict(self._hold_test_report)
+            )
+        if report is None:
+            return
+        now = time.monotonic()
+        if not force and now - self._last_hold_report_publish_monotonic < 1.0:
+            return
+        message = String()
+        message.data = json.dumps(report, ensure_ascii=False, separators=(",", ":"))
+        self.hold_test_report_publisher.publish(message)
+        self._last_hold_report_publish_monotonic = now
+
     def _publish_state(self) -> None:
         now_monotonic = time.monotonic()
+        self._finalize_hold_test_if_due(now_monotonic)
         with self._state_lock:
             latest_state = (
                 dict(self._latest_state) if self._latest_state is not None else None
@@ -180,6 +509,10 @@ class RoArmDriverNode(Node):
             "driver": {
                 "mode": "persistent_read_only_validation",
                 "motion_commands_enabled": False,
+                "diagnostic_hold_test_enabled": self.enable_diagnostic_hold_test,
+                "diagnostic_hold_test_attempted": self._hold_test_attempted,
+                "diagnostic_hold_test_command_sent": self._hold_test_command_sent,
+                "diagnostic_hold_test_report_ready": self._hold_test_report is not None,
                 "automatic_reconnect_enabled": False,
                 "serial_open_can_reset_controller": True,
                 "serial_open_count": self._serial_open_count,
@@ -194,6 +527,7 @@ class RoArmDriverNode(Node):
         message = String()
         message.data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         self.publisher.publish(message)
+        self._publish_hold_test_report()
 
     def destroy_node(self) -> None:
         self._stop_event.set()
@@ -202,7 +536,9 @@ class RoArmDriverNode(Node):
             thread.join(timeout=1.0)
         self.reader.close()
         self.get_logger().info(
-            "Persistent RoArm serial connection closed; transmitted_byte_count=0."
+            "Persistent RoArm serial connection closed; "
+            f"transmitted_command_count={self.reader.transmitted_command_count}, "
+            f"transmitted_byte_count={self.reader.transmitted_byte_count}."
         )
         super().destroy_node()
 

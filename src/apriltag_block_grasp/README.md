@@ -525,6 +525,40 @@ ros2 run apriltag_block_grasp probe_roarm_model
 解析的关节、父子连杆、关节限制及相关配置行。不创建 ROS 节点、不连接串口/相机、不调用
 服务，也不启动任何官方 launch。若 Xacro 中仍含表达式，工具只原样报告，不为其猜测数值。
 
+#### 常驻连接内的单次原位保持诊断
+
+常驻只读验收通过后，可以显式启动唯一受支持的运动诊断。该诊断不接收目标坐标；它要求
+驱动已运行至少 5 秒，并检查最近约 1 秒的 `T=1051` 反馈稳定性，然后把最新反馈中的
+`x/y/z/tit/r/g` 原样复制为一条 `T=1041`。节点生命周期内无论预检、发送或执行是否成功，
+都只允许尝试一次。其他 `/roarm_m3/cmd` 仍全部拒绝。
+
+移开物块、清空工作空间并准备断电后，启动显式授权的驱动：
+
+```bash
+ros2 run apriltag_block_grasp roarm_driver_node \
+  --ros-args \
+  -p port:=/dev/ttyUSB0 \
+  -p enable_diagnostic_hold_test:=true
+```
+
+等待至少 5 秒，确认机械臂静止，再在另一个终端发送唯一确认消息：
+
+```bash
+ros2 topic pub --once /roarm_m3/cmd std_msgs/msg/String \
+  '{data: "{\"type\":\"diagnostic_hold_current_pose\",\"confirmation\":\"I_ACCEPT_SINGLE_T1041_HOLD_TEST\"}"}'
+```
+
+观察机械臂约 12 秒，不发布第二条命令。之后读取报告：
+
+```bash
+ros2 topic echo --once --full-length \
+  /apriltag_grasp/hold_test_report std_msgs/msg/String
+```
+
+若预检失败，报告为 `reason=preflight_rejected` 且 `motion_command_sent=false`；本轮不允许重试，
+应停止节点并反馈报告。若已发送，报告包含发送前状态、唯一报文、约 0.25 秒间隔的反馈轨迹、
+最终差值和各字段最大偏移。出现明显下降或其他异常时立即断电，不等待报告。
+
 ### 单次笛卡尔 XYZ 小步安全工具
 
 `move_cartesian_fixed_orientation_safe` 用一条 RoArm-M3 `T=1041` 命令验证 XYZ 小步运动。
