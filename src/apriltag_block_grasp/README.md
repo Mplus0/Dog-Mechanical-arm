@@ -442,3 +442,18 @@ ros2 run apriltag_block_grasp probe_handeye_pair_b \
 
 显式启用后最多发送一条 `T=121, joint=1`，不会重试或恢复。输出直接给出两组
 `base_tag` 中位数及三轴差值和差值范数；只用于验证手眼链，不用于抓取动作。
+
+### PnP 多解与深度只读诊断
+
+当改变视角后 PnP 距离与固定标签不一致时，可在当前静止视角比较 IPPE 的全部候选解、
+ITERATIVE、SQPNP、标定畸变与零畸变诊断结果，同时记录四条标签像素边长和对齐后的
+中心深度：
+
+```bash
+ros2 run apriltag_block_grasp probe_pnp_solutions \
+  --tag-id 1 \
+  --frame-count 30
+```
+
+该工具不连接机械臂，也不发送运动命令。零畸变和 RGBD 深度只用于诊断，不会替换正式
+定位源或修改标定参数。
