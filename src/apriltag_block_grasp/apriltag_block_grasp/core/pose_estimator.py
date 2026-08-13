@@ -35,11 +35,33 @@ class AprilTagPoseEstimator:
     therefore composed with a 180-degree rotation about +X.
     """
 
-    def __init__(self, tag_size_mm: float, calibration: ColorCameraCalibration) -> None:
+    DISTORTION_MODES = (
+        "rectified_zero_distortion",
+        "sdk_calibrated_distortion",
+    )
+
+    def __init__(
+        self,
+        tag_size_mm: float,
+        calibration: ColorCameraCalibration,
+        distortion_mode: str = "rectified_zero_distortion",
+    ) -> None:
         self.tag_size_mm = float(tag_size_mm)
         if not np.isfinite(self.tag_size_mm) or self.tag_size_mm <= 0.0:
             raise ValueError("tag_size_mm must be finite and positive")
         self.calibration = calibration
+        self.distortion_mode = str(distortion_mode)
+        if self.distortion_mode not in self.DISTORTION_MODES:
+            raise ValueError(
+                f"unsupported distortion_mode={self.distortion_mode!r}; "
+                f"expected one of {self.DISTORTION_MODES}"
+            )
+        if self.distortion_mode == "rectified_zero_distortion":
+            self.distortion_coefficients = np.zeros((5, 1), dtype=np.float64)
+        else:
+            self.distortion_coefficients = np.asarray(
+                self.calibration.distortion_coefficients, dtype=np.float64
+            ).reshape(-1, 1)
 
         half = self.tag_size_mm / 2.0
         # The physical tag sheets used by this project are rotated 180 degrees
@@ -88,7 +110,7 @@ class AprilTagPoseEstimator:
                 self.ippe_object_points,
                 image_points,
                 self.calibration.camera_matrix,
-                self.calibration.distortion_coefficients,
+                self.distortion_coefficients,
                 flags=cv2.SOLVEPNP_IPPE_SQUARE,
             )
         except cv2.error:
@@ -107,7 +129,7 @@ class AprilTagPoseEstimator:
                 self.project_object_points,
                 image_points,
                 self.calibration.camera_matrix,
-                self.calibration.distortion_coefficients,
+                self.distortion_coefficients,
                 flags=cv2.SOLVEPNP_ITERATIVE,
             )
         except cv2.error:
@@ -137,7 +159,7 @@ class AprilTagPoseEstimator:
             rvec,
             translation.reshape(3, 1),
             self.calibration.camera_matrix,
-            self.calibration.distortion_coefficients,
+            self.distortion_coefficients,
         )
         projected = projected.reshape(4, 2)
         error = float(np.sqrt(np.mean(np.sum((projected - image_points) ** 2, axis=1))))

@@ -457,3 +457,9 @@ ros2 run apriltag_block_grasp probe_pnp_solutions \
 
 该工具不连接机械臂，也不发送运动命令。零畸变和 RGBD 深度只用于诊断，不会替换正式
 定位源或修改标定参数。
+
+多解实测表明当前 Orbbec 848x530 彩色帧已经过镜头校正：使用 SDK 返回的强畸变系数
+会把 ID 1 的 PnP Z 从约 388.5 mm 错算为约 215 mm，并把重投影误差从约 0.12 px
+增大到约 2.28 px。因此正式 PnP 默认采用 `rectified_zero_distortion`，但仍保留
+`sdk_calibrated_distortion` 作为显式诊断模式。节点输出中的 `pnp_distortion_mode` 和
+`pnp_distortion_coefficients` 表示求解实际使用的值，不等同于 SDK 中仍可读取的镜头参数。

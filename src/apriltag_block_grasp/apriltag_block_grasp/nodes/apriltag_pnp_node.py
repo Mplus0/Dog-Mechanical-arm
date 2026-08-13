@@ -33,6 +33,7 @@ class AprilTagPnpNode(Node):
         self.declare_parameter("status_period_s", 2.0)
         self.declare_parameter("show_window", False)
         self.declare_parameter("axis_length_mm", 20.0)
+        self.declare_parameter("distortion_mode", "rectified_zero_distortion")
 
         allowed_ids = [int(value) for value in self.get_parameter("allowed_ids").value]
         self.tag_size_mm = float(self.get_parameter("tag_size_mm").value)
@@ -41,6 +42,7 @@ class AprilTagPnpNode(Node):
         self.status_period_s = max(0.1, float(self.get_parameter("status_period_s").value))
         self.show_window = self.parse_bool(self.get_parameter("show_window").value)
         self.axis_length_mm = max(1.0, float(self.get_parameter("axis_length_mm").value))
+        self.distortion_mode = str(self.get_parameter("distortion_mode").value)
 
         self.publisher = self.create_publisher(String, "/apriltag_grasp/pnp", 10)
         self.camera = OrbbecColorCamera()
@@ -59,14 +61,19 @@ class AprilTagPnpNode(Node):
         try:
             self.camera.start()
             self.calibration = read_orbbec_color_calibration(self.camera)
-            self.pose_estimator = AprilTagPoseEstimator(self.tag_size_mm, self.calibration)
+            self.pose_estimator = AprilTagPoseEstimator(
+                self.tag_size_mm,
+                self.calibration,
+                distortion_mode=self.distortion_mode,
+            )
         except Exception:
             self.camera.stop()
             raise
         self.get_logger().info(
             f"Calibration source={self.calibration.source} "
             f"resolution={self.calibration.width}x{self.calibration.height} "
-            f"tag_size_mm={self.tag_size_mm}"
+            f"tag_size_mm={self.tag_size_mm} "
+            f"distortion_mode={self.pose_estimator.distortion_mode}"
         )
         self.timer = self.create_timer(self.timer_period_s, self.on_timer)
 
@@ -159,7 +166,7 @@ class AprilTagPnpNode(Node):
                 cv2.drawFrameAxes(
                     display,
                     self.calibration.camera_matrix,
-                    self.calibration.distortion_coefficients,
+                    self.pose_estimator.distortion_coefficients,
                     pose.rvec.reshape(3, 1),
                     pose.translation_mm.reshape(3, 1),
                     self.axis_length_mm,
@@ -199,6 +206,10 @@ class AprilTagPnpNode(Node):
                 "z": "printed_front_to_back_away_from_observer",
             },
             "calibration_source": self.calibration.source,
+            "pnp_distortion_mode": self.pose_estimator.distortion_mode,
+            "pnp_distortion_coefficients": (
+                self.pose_estimator.distortion_coefficients.reshape(-1).tolist()
+            ),
             "calibration_resolution": {
                 "width": self.calibration.width,
                 "height": self.calibration.height,

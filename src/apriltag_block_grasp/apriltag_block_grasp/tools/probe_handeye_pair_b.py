@@ -229,6 +229,10 @@ def main() -> int:
         calibration = read_orbbec_color_calibration(camera)
         detector = OpenCvAprilTag25h9Detector(allowed_ids=(tag_id,))
         estimator = AprilTagPoseEstimator(float(args.tag_size_mm), calibration)
+        report["pnp_distortion_mode"] = estimator.distortion_mode
+        report["pnp_distortion_coefficients"] = (
+            estimator.distortion_coefficients.reshape(-1).tolist()
+        )
 
         baseline = collect_group(
             name="baseline",

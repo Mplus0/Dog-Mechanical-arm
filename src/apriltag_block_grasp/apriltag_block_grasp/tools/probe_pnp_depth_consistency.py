@@ -138,6 +138,10 @@ def main() -> int:
             values["rgbd"].append(sample["rgbd_depth_mm"])
 
         report["calibration_source"] = calibration.source
+        report["pnp_distortion_mode"] = estimator.distortion_mode
+        report["pnp_distortion_coefficients"] = (
+            estimator.distortion_coefficients.reshape(-1).tolist()
+        )
         report["frames"] = {
             "requested_count": 60,
             "valid_rgbd_count": valid_rgbd_frames,
