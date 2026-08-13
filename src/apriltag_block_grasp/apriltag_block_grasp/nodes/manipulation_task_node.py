@@ -190,7 +190,7 @@ class ManipulationTaskNode(Node):
         decision = self.session.accept_command(data, time.monotonic())
         if decision.action == "accepted":
             if self.enable_b_search_motion:
-                if not self.initialize_b_search():
+                if not self.prepare_b_search_for_accepted_task():
                     task_id = self.session.active_task_id
                     self.publish_result(task_id, "task_rejected", "b_search_preflight_failed")
                     self.session.finish_terminal()
@@ -335,6 +335,30 @@ class ManipulationTaskNode(Node):
             self.get_logger().error(f"B-search preflight failed: {exc}")
             return False
         self.cycle_observation_b_deg = b0
+        self.reset_search_attempt_preserving_b0()
+        return True
+
+    def prepare_b_search_for_accepted_task(self) -> bool:
+        """Capture B0 once per node-lifetime task cycle, then preserve it."""
+        if self.cycle_observation_b_deg is None:
+            return self.initialize_b_search()
+
+        current_b_deg = self.latest_b_deg_for_preflight()
+        if current_b_deg is None:
+            self.get_logger().error(
+                "B-search preflight failed: no fresh enabled B state"
+            )
+            return False
+        if (
+            abs(current_b_deg - self.cycle_observation_b_deg)
+            > self.b_search_config.arrival_tolerance_deg
+        ):
+            self.get_logger().error(
+                "B-search preflight failed: current B is not at the preserved "
+                f"cycle B0 (current={current_b_deg:.3f}, "
+                f"B0={self.cycle_observation_b_deg:.3f})"
+            )
+            return False
         self.reset_search_attempt_preserving_b0()
         return True
 
