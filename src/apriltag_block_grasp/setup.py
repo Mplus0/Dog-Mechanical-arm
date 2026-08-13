@@ -39,6 +39,7 @@ setup(
             "probe_pnp_solutions = apriltag_block_grasp.tools.probe_pnp_solutions:main",
             "move_cartesian_fixed_orientation_safe = apriltag_block_grasp.tools.move_cartesian_fixed_orientation_safe:main",
             "probe_official_motion_interfaces = apriltag_block_grasp.tools.probe_official_motion_interfaces:main",
+            "roarm_driver_node = apriltag_block_grasp.nodes.roarm_driver_node:main",
         ],
     },
 )

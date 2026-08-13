@@ -113,6 +113,12 @@ def main() -> int:
         "summary": {"valid": False},
     }
     try:
+        if args.enable_motion:
+            raise RuntimeError(
+                "direct serial Cartesian motion is disabled: hardware tests "
+                "with both T=104 and the current M3 T=1041 command changed Z "
+                "and pitch instead of reaching the requested relative XYZ"
+            )
         deltas = [
             finite_float(args.dx_mm, "dx_mm"),
             finite_float(args.dy_mm, "dy_mm"),

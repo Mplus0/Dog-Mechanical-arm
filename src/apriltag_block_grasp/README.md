@@ -480,16 +480,48 @@ ros2 run apriltag_block_grasp probe_handeye_pair_b \
 显式启用后最多发送一条 `T=121, joint=1`，不会重试或恢复。输出直接给出两组
 `base_tag` 中位数及三轴差值和差值范数；只用于验证手眼链，不用于抓取动作。
 
+### 常驻只读机械臂驱动验证
+
+`roarm_driver_node` 是新包内部独立实现的第一版常驻驱动。当前版本只用于区分“打开串口
+导致的控制器复位动作”和“显式运动命令”：
+
+- 节点生命周期内只打开一次 `/dev/ttyUSB0`；
+- 持续读取 `T=1051` 并发布 `/roarm_m3/state`；
+- 订阅 `/roarm_m3/cmd`，但拒绝所有收到的命令；
+- 串口类没有写接口，`serial_bytes_transmitted` 始终应为 `0`；
+- 读取失败后不自动重连，避免再次触发控制器复位；
+- 不发送初始姿态、LED、夹爪或任何运动命令。
+
+启动前必须停止旧功能包驱动、所有串口探针和网页中可能占用 `/dev/ttyUSB0` 的连接。同一时刻
+只允许本节点占用机械臂串口：
+
+```bash
+ros2 run apriltag_block_grasp roarm_driver_node \
+  --ros-args -p port:=/dev/ttyUSB0
+```
+
+首次打开串口仍可能使 ESP32 复位并产生一次固定动作。保持节点连续运行至少 60 秒，不启动
+其他机械臂程序，也不向命令话题发布消息。在另一个终端检查：
+
+```bash
+ros2 topic echo --once --full-length /roarm_m3/state std_msgs/msg/String
+```
+
+验收时应看到 `connected=true`、`state_valid=true`、`serial_open_count=1`、
+`serial_bytes_transmitted=0`、`motion_commands_enabled=false`，且固定动作只在节点首次连接时
+出现一次，持续运行期间不重复。按 `Ctrl-C` 停止节点会关闭串口；再次启动会重新打开串口，
+因此可能再次复位，不能把重启后的动作计为同一次连接内重复动作。
+
 ### 单次笛卡尔 XYZ 小步安全工具
 
-`move_cartesian_fixed_orientation_safe` 用一条 RoArm `T=104` 命令验证 XYZ 小步运动。
-固件命令字段为 `x/y/z/t/r/g/spd`：它可以指定 TCP 的 XYZ、工具俯仰 `t`、工具滚转
+`move_cartesian_fixed_orientation_safe` 用一条 RoArm-M3 `T=1041` 命令验证 XYZ 小步运动。
+固件命令字段为 `x/y/z/t/r/g`：它可以指定 TCP 的 XYZ、工具俯仰 `t`、工具滚转
 `r` 和夹爪 `g`，但没有独立的 yaw/B 字段。B 角由固件逆运动学根据目标位置确定，因此该工具
 不能承诺在不同 XYZ 下保持完整 RPY 不变。
 
 工具默认只演练，不发送命令。默认 `--orientation-source current`：读取新鲜 `T=1051` 后，
 将当前 `tit/r/g` 原样复制到命令，仅在当前 XYZ 上增加 `dx/dy/dz`。默认每轴和三维总位移
-都不超过 5 mm，速度为 `0.05`，只允许发送一条命令，不重试、不恢复，也不控制相机和补光灯。
+都不超过 5 mm，只允许发送一条命令，不重试、不恢复，也不控制相机和补光灯。
 `--orientation-source calibration` 仍保留用于后续姿态复现，但当前阶段不要使用。
 
 首次测试必须移开物块并清空机械臂周围空间。先编译并演练 `X + 5 mm`：
@@ -508,15 +540,18 @@ ros2 run apriltag_block_grasp move_cartesian_fixed_orientation_safe \
 1. `orientation_source=current`；
 2. `requested_delta_xyz_mm` 为 `[5, 0, 0]`；
 3. `target_xyz_mm.x = initial_state.x + 5`，Y/Z 不变；
-4. `planned_command.T=104`；
+4. `planned_command.T=1041`；
 5. `planned_command.t/r/g` 分别等于当前反馈 `tit/r/g`；
 6. `pitch_change_deg=0`、`roll_change_deg=0`；
 7. `motion_command_sent=false`。
 
-直接 `T=104` 的实机发送现已停用。两次 `X +/-5 mm` 测试均未保持目标 XYZ/pitch：机械臂
-反而沿 Z 下降约 24--25 mm。当前官方 RoArm-M3 SDK 使用 `T=1041` 生成位置控制命令，
-而旧功能包沿用的 `T=104` 不适用于当前固件。即使指定 `--enable-motion`，工具也会在打开
-串口之前拒绝执行；不要继续使用以下旧测试命令：
+直接笛卡尔串口实机发送现已停用。旧 `T=104` 的两次 `X +/-5 mm` 测试均沿 Z 下降约
+24--25 mm。改用当前官方 RoArm-M3 `T=1041` 后，`X +5 mm` 测试从
+`[364.823, 3.358, 160.786] mm` 运动到 `[375.705, 3.458, 131.366] mm`，仍未保持目标
+Z/pitch。该测试目标距 base 原点约 403.3 mm，而最终反馈距原点约 398.0 mm，存在目标
+接近或超出当前姿态可达边界的可能；这只是待验证假设，不能据此判定 `T=1041` 协议错误。
+在核对 RoArm-M3 几何、关节限制和逆解返回前，即使指定 `--enable-motion`，工具也会在打开
+串口之前拒绝执行；不要继续使用以下测试命令：
 
 ```bash
 ros2 run apriltag_block_grasp move_cartesian_fixed_orientation_safe \
@@ -525,8 +560,10 @@ ros2 run apriltag_block_grasp move_cartesian_fixed_orientation_safe \
   --enable-motion
 ```
 
-下一步改用官方 ROS 2/MoveIt 服务。在启动任何机械臂节点或调用服务之前，先运行完全只读的
-接口探针：
+官方 ROS 2/MoveIt 接口探针已经确认三个服务类型均已安装，但当前 ROS 图中没有对应服务
+提供者。官方 `command_control.launch.py` 启动时会主动将前臂伸展到水平姿态，因此不得在
+当前现场姿态下直接启动。下一步先离线核对已安装的 RoArm-M3 模型、关节限制和目标可达性，
+不连接机械臂：
 
 ```bash
 ros2 run apriltag_block_grasp probe_official_motion_interfaces
@@ -534,7 +571,8 @@ ros2 run apriltag_block_grasp probe_official_motion_interfaces
 
 该探针不打开串口、不创建 service client，也不发送 service request；它只列出已安装的
 `GetPoseCmd`、`MoveJointCmd`、`MoveLineCmd` 请求/响应字段，并读取 ROS 图中对应服务是否已存在。
-将完整 JSON 返回后，再确定采用 `/move_line_cmd` 还是 `/move_joint_cmd`。
+接口探针结果与离线可达性检查共同决定后续采用 `/move_line_cmd`、`/move_joint_cmd`，还是
+经过可达性检查的 `T=1041` 直控。
 
 在官方接口验证完成前，不再进行任何 XYZ 实机测试。
 
