@@ -32,6 +32,8 @@ class ManipulationTaskNode(Node):
         self.declare_parameter("arm_command_topic", "/roarm_m3/cmd")
         self.declare_parameter("arm_command_result_topic", "/roarm_m3/cmd_result")
         self.declare_parameter("enable_b_search_motion", False)
+        self.declare_parameter("enable_observation_motion", False)
+        self.declare_parameter("observation_result_timeout_s", 5.0)
         self.declare_parameter(
             "stability_config_path", str(share / "config" / "target_stability.json")
         )
@@ -52,6 +54,17 @@ class ManipulationTaskNode(Node):
         self.enable_b_search_motion = bool(
             self.get_parameter("enable_b_search_motion").value
         )
+        self.enable_observation_motion = bool(
+            self.get_parameter("enable_observation_motion").value
+        )
+        self.observation_result_timeout_s = float(
+            self.get_parameter("observation_result_timeout_s").value
+        )
+        if (
+            not math.isfinite(self.observation_result_timeout_s)
+            or self.observation_result_timeout_s <= 0.0
+        ):
+            raise ValueError("observation_result_timeout_s must be positive")
         timeout_check_period_s = float(
             self.get_parameter("timeout_check_period_s").value
         )
@@ -97,6 +110,9 @@ class ManipulationTaskNode(Node):
         self.b_arrival_stable_count = 0
         self.b_command_sequence = 0
         self.pending_terminal_b_failure: Optional[Dict[str, Any]] = None
+        self.observation_motion_completed = False
+        self.pending_observation_command_id: Optional[str] = None
+        self.pending_observation_sent_monotonic: Optional[float] = None
         self.timeout_timer = self.create_timer(
             timeout_check_period_s, self.on_timeout_check
         )
@@ -104,7 +120,8 @@ class ManipulationTaskNode(Node):
         self.get_logger().info(
             "Manipulation task node started: command-driven localization; "
             f"B_search_motion_enabled={self.enable_b_search_motion}; "
-            "observation motion, gripper and grasp motions remain disabled."
+            f"observation_motion_enabled={self.enable_observation_motion}; "
+            "gripper and grasp motions remain disabled."
         )
 
     @staticmethod
@@ -121,11 +138,26 @@ class ManipulationTaskNode(Node):
             "carrying_id": None,
             "target_snapshot_only": True,
             "pick_motion_executed": False,
-            "observation_motion_enabled": False,
+            "observation_motion_enabled": self.enable_observation_motion,
+            "observation_motion_completed": self.observation_motion_completed,
             "b_search_enabled": self.enable_b_search_motion,
             "gripper_commands_enabled": False,
-            "motion_commands_enabled": self.enable_b_search_motion,
-            "motion_scope": "B_joint_search_only" if self.enable_b_search_motion else "none",
+            "motion_commands_enabled": (
+                self.enable_b_search_motion or self.enable_observation_motion
+            ),
+            "motion_scope": (
+                "fixed_observation_and_B_joint_search"
+                if self.enable_b_search_motion and self.enable_observation_motion
+                else (
+                    "B_joint_search_only"
+                    if self.enable_b_search_motion
+                    else (
+                        "fixed_observation_only"
+                        if self.enable_observation_motion
+                        else "none"
+                    )
+                )
+            ),
             "b_search_maximum_index": (
                 self.b_search_config.maximum_automatic_search_index
                 if self.enable_b_search_motion
@@ -189,6 +221,10 @@ class ManipulationTaskNode(Node):
 
         decision = self.session.accept_command(data, time.monotonic())
         if decision.action == "accepted":
+            if self.enable_observation_motion:
+                self.observation_motion_completed = False
+                self.start_observation_motion()
+                return
             if self.enable_b_search_motion:
                 if not self.prepare_b_search_for_accepted_task():
                     task_id = self.session.active_task_id
@@ -227,6 +263,9 @@ class ManipulationTaskNode(Node):
 
     def on_timeout_check(self) -> None:
         if not self.session.active or self.session.state == "reposition_required":
+            return
+        if self.session.state == "waiting_observation_motion":
+            self.check_observation_motion_timeout()
             return
         if self.session.active and self.session.state == "waiting_b_motion":
             self.check_b_motion_timeout()
@@ -463,11 +502,17 @@ class ManipulationTaskNode(Node):
             self.send_next_b_route_target()
 
     def on_arm_command_result(self, message: String) -> None:
-        if self.pending_b_command_id is None:
-            return
         try:
             result = self.parse_json(message)
         except Exception:
+            return
+        if (
+            self.pending_observation_command_id is not None
+            and result.get("command_id") == self.pending_observation_command_id
+        ):
+            self.handle_observation_result(result)
+            return
+        if self.pending_b_command_id is None:
             return
         if result.get("command_id") != self.pending_b_command_id:
             return
@@ -475,6 +520,72 @@ class ManipulationTaskNode(Node):
             self.fail_b_search("b_command_rejected", result)
             return
         self.pending_b_command_accepted = True
+
+    def start_observation_motion(self) -> None:
+        command_id = f"task-{self.session.active_task_id}-observation"
+        self.pending_observation_command_id = command_id
+        self.pending_observation_sent_monotonic = time.monotonic()
+        self.session.state = "waiting_observation_motion"
+        self.session.last_reason = "observation_motion_requested"
+        self.publish_json(
+            self.arm_command_publisher,
+            {"command_id": command_id, "type": "move_observation_pose"},
+        )
+        self.publish_state(
+            "waiting_observation_motion",
+            "observation_motion_requested",
+            {"pending_observation_command_id": command_id},
+        )
+
+    def handle_observation_result(self, result: Dict[str, Any]) -> None:
+        command_id = self.pending_observation_command_id
+        self.pending_observation_command_id = None
+        self.pending_observation_sent_monotonic = None
+        if not bool(result.get("accepted", False)):
+            self.fail_observation_motion(
+                "observation_command_rejected", {"driver_result": result}
+            )
+            return
+        if result.get("reason") != "timed_wait_complete":
+            self.fail_observation_motion(
+                "observation_completion_invalid", {"driver_result": result}
+            )
+            return
+        self.observation_motion_completed = True
+        if self.enable_b_search_motion and not self.prepare_b_search_for_accepted_task():
+            self.fail_observation_motion("b_search_preflight_failed", {})
+            return
+        if not self.enable_b_search_motion:
+            self.session.restart_localization(
+                time.monotonic(), "observation_motion_complete"
+            )
+        self.publish_state(
+            "localizing",
+            "observation_motion_complete",
+            {
+                "observation_command_id": command_id,
+                "observation_driver_result": result,
+            },
+        )
+
+    def check_observation_motion_timeout(self) -> None:
+        if self.pending_observation_sent_monotonic is None:
+            return
+        if (
+            time.monotonic() - self.pending_observation_sent_monotonic
+            >= self.observation_result_timeout_s
+        ):
+            self.pending_observation_command_id = None
+            self.pending_observation_sent_monotonic = None
+            self.fail_observation_motion("observation_result_timeout", {})
+
+    def fail_observation_motion(
+        self, reason: str, detail: Dict[str, Any]
+    ) -> None:
+        task_id = self.session.active_task_id
+        self.publish_state("observation_motion_failed", reason, detail)
+        self.publish_result(task_id, "motion_failed", reason, detail)
+        self.session.finish_terminal()
 
     def check_b_motion_timeout(self) -> None:
         if self.pending_b_sent_monotonic is None:
