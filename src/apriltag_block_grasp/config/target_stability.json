@@ -1,14 +1,17 @@
 {
-  "description": "Stage-4B target selection and base-object XYZ stability parameters validated from two 100-frame static tests.",
+  "description": "Stage-4B target selection and base-object XYZ stability parameters validated from static 100-frame tests at field observation poses.",
   "selection_order": [0, 1],
   "stable_frame_count": 10,
-  "xyz_peak_to_peak_threshold_mm": [1.0, 1.0, 1.0],
+  "xyz_peak_to_peak_threshold_mm": [1.0, 1.0, 2.0],
   "stable_timeout_s": 3.0,
   "max_pnp_arm_stamp_delta_s": 0.2,
   "max_arm_state_reported_age_s": 0.1,
   "validation": {
     "id_0_100_frame_peak_to_peak_mm": [0.3204075884916051, 0.2518038061652206, 0.5358496387906797],
     "id_1_100_frame_peak_to_peak_mm": [0.2330537389265146, 0.24980335785444652, 0.5997093711721391],
+    "field_retry_100_frame_peak_to_peak_mm": [0.7714015616390384, 0.8750180893252164, 1.6080107851867496],
+    "field_retry_100_frame_std_mm": [0.1615106118773704, 0.18554041050685507, 0.3535724815946114],
+    "threshold_adjustment_reason": "Static field data passed 1 mm on X/Y but reached 1.608 mm peak-to-peak on Z; Z threshold raised to 2 mm without relaxing X/Y.",
     "maximum_observed_pnp_arm_stamp_delta_s": 0.12664103507995605,
     "maximum_observed_arm_state_reported_age_s": 0.033243124998989515
   }
