@@ -613,6 +613,52 @@ ros2 run apriltag_block_grasp probe_target_candidate_stability \
 三维距离、PnP 与机械臂状态时间差、机械臂状态波动、重投影误差及像素面积。根据实测统计再
 共同确定稳定帧数和 XYZ 波动阈值。
 
+### Stage 4B：目标选择、锁定和稳定快照（只读）
+
+两次静止 100 帧测试均为 `100/100` 有效。ID 0 的 XYZ 峰峰值为
+`[0.320, 0.252, 0.536] mm`，ID 1 为 `[0.233, 0.250, 0.600] mm`。据此确认首版参数：
+
+```text
+选择顺序：ID 0 -> ID 1
+连续有效帧：10
+XYZ 每轴峰峰值上限：[1.0, 1.0, 1.0] mm
+稳定采样超时：3.0 s
+PnP 与机械臂状态最大时间差：0.20 s
+机械臂上报状态最大年龄：0.10 s
+```
+
+`stable_target_node` 只订阅 `/apriltag_grasp/target_candidates`，发布
+`/apriltag_grasp/stable_target`，不打开任何硬件。锁定规则如下：
+
+- ID 0、1 同时有效时锁定 ID 0；只有 ID 1 有效时锁定 ID 1；
+- 锁定后本轮不切换 ID；
+- 锁定 ID 缺失、候选消息无效或时间新鲜度不合格时，清空当前连续样本；
+- 达到 10 帧且三个轴的峰峰值均不超过 1 mm 后，发布并冻结 XYZ 中位数快照；
+- 超时前从未看到 ID 0/1 时为 `target_not_found`，看到过但未稳定时为
+  `target_unstable`。
+
+编译后，在 Stage 4A 三个节点保持运行的情况下启动第四个终端：
+
+```bash
+colcon build --packages-select apriltag_block_grasp --event-handlers console_direct+
+source install/setup.bash
+
+ros2 run apriltag_block_grasp stable_target_node
+```
+
+立即在另一个终端监听输出；由于本阶段没有 `pick` 入口，每次进程启动代表一次独立定位尝试：
+
+```bash
+ros2 topic echo --full-length \
+  /apriltag_grasp/stable_target std_msgs/msg/String
+```
+
+正常静止目标应依次出现 `waiting/collecting`，最终出现 `status=stable`、
+`valid=true`、`snapshot_frozen=true` 和 `collected_frame_count=10`。同时必须始终满足
+`camera_opened=false`、`arm_serial_opened=false`、`b_search_enabled=false`、
+`task_cycle_enabled=false`、`motion_commands_enabled=false`。完成一次尝试后需要重启该只读
+节点再测试下一个场景；显式任务入口和复位规则将在任务周期小阶段实现。
+
 ### 单次笛卡尔 XYZ 小步安全工具
 
 `move_cartesian_fixed_orientation_safe` 用一条 RoArm-M3 `T=1041` 命令验证 XYZ 小步运动。
