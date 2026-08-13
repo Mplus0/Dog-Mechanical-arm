@@ -719,6 +719,37 @@ ros2 topic pub --once /apriltag_grasp/task_cmd std_msgs/msg/String \
 放置和机器狗最终通信尚未实现。任何非 `pick` 命令都会被拒绝为
 `place_and_dog_communication_not_implemented`，不会发送运动。
 
+### 抓取 XYZ 与夹爪角度交互标定
+
+`calibrate_grasp_compensation` 只订阅 `/roarm_m3/state`，不会发布任何运动或夹爪命令。
+推荐明确指定源码配置目录，避免只修改随后会被重新编译覆盖的 `install` 副本：
+
+```bash
+ros2 run apriltag_block_grasp calibrate_grasp_compensation \
+  --config-dir ~/dog/ros2_red_block_ws/src/apriltag_block_grasp/config
+```
+
+常用交互命令：
+
+```text
+status                  显示当前 XYZ、g 弧度和角度
+live 10                 连续显示10秒实时反馈
+auto                    记录自动最终夹持点
+corrected               网页手动调整完成后记录正确夹持点
+trim X Y Z              在自动计算结果上继续增加毫米微调
+offset X Y Z            直接设置候选 final_grasp_tcp_offset_base_mm
+open DEG                设置开爪角度
+close DEG               设置闭爪角度
+use-g open              采用当前反馈 g 作为开爪角度
+use-g close             采用当前反馈 g 作为闭爪角度
+show                    预览全部候选值
+save                    二次确认后保存
+quit                    不自动保存并退出
+```
+
+`save` 会同时修改 `grasp_calibration.json` 和 `motion_control.json`，并在同一目录为两个原文件
+分别建立带时间戳的 `.bak` 备份。保存后必须重新编译并重启流水线节点才能加载新参数。
+
 分别监听状态和结果：
 
 ```bash

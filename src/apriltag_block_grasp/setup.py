@@ -47,6 +47,7 @@ setup(
             "probe_target_candidate_stability = apriltag_block_grasp.tools.probe_target_candidate_stability:main",
             "stable_target_node = apriltag_block_grasp.nodes.stable_target_node:main",
             "manipulation_task_node = apriltag_block_grasp.nodes.manipulation_task_node:main",
+            "calibrate_grasp_compensation = apriltag_block_grasp.tools.calibrate_grasp_compensation:main",
         ],
     },
 )
