@@ -11,15 +11,22 @@ import json
 import math
 import threading
 import time
+from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import rclpy
+from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
 from std_msgs.msg import String
 
 from apriltag_block_grasp.core.b_joint_command import (
     BJointCommandLimits,
     validate_b_joint_request,
+)
+from apriltag_block_grasp.core.observation_motion import (
+    OBSERVATION_COMMAND_TYPE,
+    load_observation_motion_config,
+    validate_observation_request,
 )
 from apriltag_block_grasp.core.roarm_serial_control import RoArmCartesianController
 
@@ -44,6 +51,12 @@ class RoArmDriverNode(Node):
         self.declare_parameter("state_publish_period_s", 0.2)
         self.declare_parameter("state_stale_timeout_s", 1.0)
         self.declare_parameter("enable_b_joint_motion", False)
+        self.declare_parameter("enable_observation_motion", False)
+        self.declare_parameter("observation_max_state_age_s", 0.25)
+        share = Path(get_package_share_directory("apriltag_block_grasp"))
+        self.declare_parameter(
+            "motion_config_path", str(share / "config" / "motion_control.json")
+        )
         self.declare_parameter("b_joint_min_deg", -20.0)
         self.declare_parameter("b_joint_max_deg", 20.0)
         self.declare_parameter("b_joint_max_delta_deg", 10.0)
@@ -69,6 +82,15 @@ class RoArmDriverNode(Node):
         )
         self.enable_b_joint_motion = bool(
             self.get_parameter("enable_b_joint_motion").value
+        )
+        self.enable_observation_motion = bool(
+            self.get_parameter("enable_observation_motion").value
+        )
+        self.observation_motion_config = load_observation_motion_config(
+            str(self.get_parameter("motion_config_path").value)
+        )
+        self.observation_max_state_age_s = self._positive_parameter(
+            "observation_max_state_age_s"
         )
         self.b_joint_limits = BJointCommandLimits(
             minimum_deg=float(self.get_parameter("b_joint_min_deg").value),
@@ -155,6 +177,7 @@ class RoArmDriverNode(Node):
         self._read_error: Optional[str] = None
         self._rejected_command_count = 0
         self._accepted_b_joint_command_count = 0
+        self._accepted_observation_command_count = 0
         self._last_command_result: Optional[Dict[str, Any]] = None
         self._command_lock = threading.Lock()
         self._serial_open_count = 0
@@ -182,6 +205,11 @@ class RoArmDriverNode(Node):
             self.get_logger().warning(
                 "B-JOINT MOTION IS ENABLED: only absolute joint=1 commands within "
                 "the configured range and delta limits are accepted."
+            )
+        if self.enable_observation_motion:
+            self.get_logger().warning(
+                "FIXED OBSERVATION MOTION IS ENABLED: only the configured "
+                "B/T/R/S/E sequence is accepted; the gripper is never commanded."
             )
         if self.enable_diagnostic_hold_test:
             self.get_logger().warning(
@@ -247,6 +275,9 @@ class RoArmDriverNode(Node):
             self._reject_command(None, "command_must_be_json_object")
             return
         command_type = command.get("type")
+        if command_type == OBSERVATION_COMMAND_TYPE:
+            self._handle_observation_command(command)
+            return
         if command_type == "move_b_joint":
             self._handle_b_joint_command(command)
             return
@@ -354,6 +385,101 @@ class RoArmDriverNode(Node):
                 "accepted": False,
                 "reason": reason,
                 "motion_command_sent": False,
+            }
+        )
+
+    def _reject_observation_command(
+        self, command: Dict[str, Any], reason: str
+    ) -> None:
+        self._reject_command(command.get("type"), reason)
+        self._publish_command_result(
+            {
+                "command_id": command.get("command_id"),
+                "type": OBSERVATION_COMMAND_TYPE,
+                "accepted": False,
+                "reason": reason,
+                "motion_command_sent": False,
+                "gripper_commanded": False,
+            }
+        )
+
+    def _handle_observation_command(self, command: Dict[str, Any]) -> None:
+        if not self.enable_observation_motion:
+            self._reject_observation_command(
+                command, "observation_motion_not_enabled"
+            )
+            return
+        try:
+            command_id = validate_observation_request(command)
+        except Exception as exc:
+            self._reject_observation_command(
+                command, f"validation_failed:{type(exc).__name__}:{exc}"
+            )
+            return
+
+        now = time.monotonic()
+        with self._state_lock:
+            latest_state = self._latest_state
+            latest_time = self._latest_state_monotonic
+            read_error = self._read_error
+        if read_error is not None:
+            self._reject_observation_command(command, "serial_read_error")
+            return
+        if latest_state is None or latest_time is None:
+            self._reject_observation_command(command, "arm_state_unavailable")
+            return
+        state_age_s = max(0.0, now - latest_time)
+        if state_age_s > self.observation_max_state_age_s:
+            self._reject_observation_command(command, "arm_state_stale")
+            return
+
+        sent_commands: List[Dict[str, Any]] = []
+        try:
+            commands = self.observation_motion_config.serial_commands()
+            with self._command_lock:
+                for index, item in enumerate(commands):
+                    sent_commands.append(
+                        self.reader.send_joint_command(
+                            item["joint"], item["angle"], item["spd"], item["acc"]
+                        )
+                    )
+                    if (
+                        index + 1 < len(commands)
+                        and self.observation_motion_config.command_interval_s > 0.0
+                    ):
+                        time.sleep(
+                            self.observation_motion_config.command_interval_s
+                        )
+        except Exception as exc:
+            self._serial_bytes_transmitted = self.reader.transmitted_byte_count
+            self._publish_command_result(
+                {
+                    "command_id": command_id,
+                    "type": OBSERVATION_COMMAND_TYPE,
+                    "accepted": False,
+                    "reason": f"serial_send_failed:{type(exc).__name__}:{exc}",
+                    "motion_command_sent": bool(sent_commands),
+                    "gripper_commanded": False,
+                    "sent_commands": sent_commands,
+                }
+            )
+            return
+
+        self._accepted_observation_command_count += 1
+        self._serial_bytes_transmitted = self.reader.transmitted_byte_count
+        time.sleep(self.observation_motion_config.timed_wait_s)
+        self._publish_command_result(
+            {
+                "command_id": command_id,
+                "type": OBSERVATION_COMMAND_TYPE,
+                "accepted": True,
+                "reason": "timed_wait_complete",
+                "motion_command_sent": True,
+                "gripper_commanded": False,
+                "completion_mode": "timed",
+                "timed_wait_s": self.observation_motion_config.timed_wait_s,
+                "state_age_s_at_send": state_age_s,
+                "sent_commands": sent_commands,
             }
         )
 
@@ -649,14 +775,28 @@ class RoArmDriverNode(Node):
             "state": self._normalize_state(latest_state),
             "driver": {
                 "mode": (
-                    "persistent_b_joint_motion_enabled"
-                    if self.enable_b_joint_motion
-                    else "persistent_read_only_validation"
+                    "persistent_b_and_observation_motion_enabled"
+                    if self.enable_b_joint_motion and self.enable_observation_motion
+                    else (
+                        "persistent_b_joint_motion_enabled"
+                        if self.enable_b_joint_motion
+                        else (
+                            "persistent_observation_motion_enabled"
+                            if self.enable_observation_motion
+                            else "persistent_read_only_validation"
+                        )
+                    )
                 ),
-                "motion_commands_enabled": self.enable_b_joint_motion,
+                "motion_commands_enabled": (
+                    self.enable_b_joint_motion or self.enable_observation_motion
+                ),
                 "b_joint_motion_enabled": self.enable_b_joint_motion,
-                "other_joint_motion_enabled": False,
+                "observation_motion_enabled": self.enable_observation_motion,
+                "other_joint_motion_enabled": self.enable_observation_motion,
                 "accepted_b_joint_command_count": self._accepted_b_joint_command_count,
+                "accepted_observation_command_count": (
+                    self._accepted_observation_command_count
+                ),
                 "last_command_result": self._last_command_result,
                 "diagnostic_hold_test_enabled": self.enable_diagnostic_hold_test,
                 "diagnostic_hold_test_attempted": self._hold_test_attempted,
