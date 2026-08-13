@@ -43,6 +43,7 @@ setup(
             "probe_roarm_model = apriltag_block_grasp.tools.probe_roarm_model:main",
             "move_observation_pose_safe = apriltag_block_grasp.tools.move_observation_pose_safe:main",
             "target_candidate_node = apriltag_block_grasp.nodes.target_candidate_node:main",
+            "probe_target_candidate_stability = apriltag_block_grasp.tools.probe_target_candidate_stability:main",
         ],
     },
 )

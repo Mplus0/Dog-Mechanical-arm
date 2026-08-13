@@ -599,6 +599,20 @@ ros2 topic echo --once --full-length \
 `arm_serial_opened=false`、`selection_enabled=false`、`locking_enabled=false` 和
 `stability_check_enabled=false`。请依次提供仅 ID 0、仅 ID 1、ID 0/1 同时可见时的消息。
 
+三种候选输出确认后，固定机械臂、标签和物块，分别采集 ID 0 和 ID 1 的 100 帧原始统计：
+
+```bash
+ros2 run apriltag_block_grasp probe_target_candidate_stability \
+  --tag-id 0 --sample-count 100 --timeout-s 20
+
+ros2 run apriltag_block_grasp probe_target_candidate_stability \
+  --tag-id 1 --sample-count 100 --timeout-s 20
+```
+
+探针只订阅候选 topic，不打开硬件、不应用通过阈值。输出包含每轴峰峰值/标准差、相对中位数
+三维距离、PnP 与机械臂状态时间差、机械臂状态波动、重投影误差及像素面积。根据实测统计再
+共同确定稳定帧数和 XYZ 波动阈值。
+
 ### 单次笛卡尔 XYZ 小步安全工具
 
 `move_cartesian_fixed_orientation_safe` 用一条 RoArm-M3 `T=1041` 命令验证 XYZ 小步运动。
