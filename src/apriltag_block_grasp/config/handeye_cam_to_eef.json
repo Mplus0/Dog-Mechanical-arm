@@ -1,0 +1,19 @@
+{
+  "description": "X_eef = T_eef_camera * X_camera. Translation unit: mm.",
+  "source": "Copied from the existing 22-sample RoArm-M3 eye-in-hand calibration.",
+  "sample_count": 22,
+  "yaw_source": "b",
+  "best_method": "TSAI",
+  "T_eef_camera": [
+    [-0.011367926940712758, -0.029360305965576695, 0.9995042484505398, -78.78354922092662],
+    [0.030977275844155088, 0.9990787310053237, 0.029700128519367708, -76.64090633023443],
+    [-0.9994554410369407, 0.03129954770279524, -0.0104479517253242, 9.151813519758626],
+    [0.0, 0.0, 0.0, 1.0]
+  ],
+  "quality": {
+    "target_position_std_axis_mm": [2.0917118394793865, 4.296345781599458, 2.508227937499659],
+    "target_position_std_norm_mm": 5.396763185552937,
+    "target_position_error_mean_mm": 3.9873563662378158,
+    "target_position_error_max_mm": 18.19176798231467
+  }
+}

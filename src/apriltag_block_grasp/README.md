@@ -330,3 +330,31 @@ ros2 run apriltag_block_grasp probe_arm_serial_state \
 有限时，才按当前手眼标定所用约定生成候选 `T_base_eef`。请反馈完整 JSON，确认
 `summary.valid=true`、20 帧均有效，并检查静止状态下 `pose_stability` 的波动。
 连接后的启动阶段默认允许最多 5 次空读；空读不会作为状态样本，也不会复用旧状态。
+
+## 阶段 3B：只读验证手眼坐标链
+
+机械臂串口状态探针通过后，让机械臂和标签都保持静止，确保没有其他程序占用相机或
+机械臂串口，然后运行：
+
+```bash
+colcon build --packages-select apriltag_block_grasp --event-handlers console_direct+
+source install/setup.bash
+
+ros2 run apriltag_block_grasp probe_handeye_chain \
+  --port /dev/ttyUSB0 \
+  --sample-count 20
+```
+
+该探针使用新包内部独立安装的 `config/handeye_cam_to_eef.json`，计算：
+
+```text
+T_base_tag = T_base_eef @ T_eef_camera @ T_camera_tag
+```
+
+它只输出标签中心在 base 下的坐标，不应用 `T_tag_object`、
+`base_position_correction_mm` 或旧包的 `base Z + 100 mm`。RGBD 深度关闭，机械臂
+串口仍为只读且不发送命令。
+
+请先反馈 `summary`、`failure_counts`、`per_id_stability` 和最后一条 `samples`。首轮只
+判断静止状态下坐标链是否有限、矩阵方向是否合理以及 `base_tag_mm` 的波动；不把该坐标
+用于机械臂动作。
