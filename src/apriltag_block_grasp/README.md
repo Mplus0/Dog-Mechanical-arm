@@ -386,3 +386,31 @@ ros2 run apriltag_block_grasp move_b_joint_safe \
 反馈，连续 3 帧进入 `±1°` 才报告到位；超时不会自动发送第二条命令或回退。相机、
 夹爪、其他关节和补光灯均不受控制。
 连接后的初始状态默认最多读取 5 次，每次等待 1 秒；空读不会触发任何状态请求命令。
+
+### 单命令 B 关节反馈轨迹诊断
+
+如果单次 B 关节命令出现欠位或随后回落，使用独立轨迹工具在同一个串口连接中记录
+反馈。工具仍然默认只演练；显式启用后只发送一次 `T=121, joint=1`，持续记录 B 角，
+不会重发、补偿或回退，也不会控制其他关节、夹爪、相机或补光灯。
+
+先执行演练：
+
+```bash
+ros2 run apriltag_block_grasp trace_b_joint_motion \
+  --port /dev/ttyUSB0 \
+  --target-b-deg 5.0
+```
+
+确认当前角度和计划命令后，清空机械臂周围空间并显式启用一次运动：
+
+```bash
+ros2 run apriltag_block_grasp trace_b_joint_motion \
+  --port /dev/ttyUSB0 \
+  --target-b-deg 5.0 \
+  --trace-duration-s 15.0 \
+  --enable-motion
+```
+
+输出中的 `trace` 默认每 0.25 秒保留一个 B 角和 `tB`，同时汇总最接近目标的时刻、
+观测到的角度范围、最终误差和所有关节的起止差值。诊断结束后保持最终实际姿态，
+不会自动回到起点。
