@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dry-run-first RoArm T=104 relative XYZ motion utility."""
+"""Dry-run-first RoArm-M3 T=1041 relative XYZ motion utility."""
 
 import argparse
 import json
@@ -42,10 +42,10 @@ def parse_arguments():
     )
     parser = argparse.ArgumentParser(
         description=(
-            "Send at most one low-speed RoArm T=104 command. Target XYZ is a "
+            "Send at most one RoArm-M3 T=1041 command. Target XYZ is a "
             "small offset from the current TCP. By default, pitch/roll/gripper "
             "are copied from the current T=1051 feedback. Cartesian yaw/B "
-            "cannot be commanded by T=104."
+            "cannot be commanded by T=1041."
         )
     )
     parser.add_argument("--port", default="/dev/ttyUSB0")
@@ -56,13 +56,12 @@ def parse_arguments():
         default="current",
         help=(
             "Use current T=1051 tit/r feedback (default), or the provisional "
-            "grasp calibration, as the T=104 pitch/roll target."
+            "grasp calibration, as the T=1041 pitch/roll target."
         ),
     )
     parser.add_argument("--dx-mm", type=float, default=0.0)
     parser.add_argument("--dy-mm", type=float, default=0.0)
     parser.add_argument("--dz-mm", type=float, default=0.0)
-    parser.add_argument("--speed", type=float, default=0.05)
     parser.add_argument("--max-axis-delta-mm", type=float, default=5.0)
     parser.add_argument("--max-distance-mm", type=float, default=5.0)
     parser.add_argument("--max-pitch-change-deg", type=float, default=15.0)
@@ -86,7 +85,7 @@ def parse_arguments():
         "--enable-motion",
         action="store_true",
         help=(
-            "Actually send one T=104 command. Without this flag, only validate "
+            "Actually send one T=1041 command. Without this flag, only validate "
             "and print the planned command."
         ),
     )
@@ -98,14 +97,14 @@ def main() -> int:
     controller = RoArmCartesianController(port=args.port, timeout_s=0.2)
     report: Dict[str, Any] = {
         "tool": "apriltag_block_grasp.move_cartesian_fixed_orientation_safe",
-        "scope": "single_T104_relative_XYZ",
+        "scope": "single_T1041_relative_XYZ",
         "dry_run": not args.enable_motion,
         "enable_motion": bool(args.enable_motion),
         "camera_opened": False,
         "serial_open_can_reset_controller": True,
         "cartesian_yaw_command_supported": False,
         "yaw_B_behavior": "selected_by_firmware_inverse_kinematics",
-        "gripper_field_required_by_T104": True,
+        "gripper_field_required_by_T1041": True,
         "gripper_change_requested": False,
         "fill_light_commanded": False,
         "automatic_retry_enabled": False,
@@ -114,18 +113,11 @@ def main() -> int:
         "summary": {"valid": False},
     }
     try:
-        if args.enable_motion:
-            raise RuntimeError(
-                "direct T=104 motion is disabled: two hardware tests did not "
-                "preserve the requested XYZ/pitch, and the current official "
-                "RoArm-M3 SDK uses T=1041 for pose control"
-            )
         deltas = [
             finite_float(args.dx_mm, "dx_mm"),
             finite_float(args.dy_mm, "dy_mm"),
             finite_float(args.dz_mm, "dz_mm"),
         ]
-        speed = finite_float(args.speed, "speed")
         max_axis_delta = finite_float(
             args.max_axis_delta_mm, "max_axis_delta_mm"
         )
@@ -149,7 +141,6 @@ def main() -> int:
         if any(
             value <= 0.0
             for value in (
-                speed,
                 max_axis_delta,
                 max_distance,
                 max_pitch_change_deg,
@@ -160,7 +151,7 @@ def main() -> int:
                 initial_timeout,
             )
         ):
-            raise ValueError("speed, limits, tolerances and timeouts must be positive")
+            raise ValueError("limits, tolerances and timeouts must be positive")
         if any(abs(delta) > max_axis_delta for delta in deltas):
             raise ValueError(
                 f"each XYZ delta must be within +/-{max_axis_delta:.3f} mm"
@@ -175,7 +166,7 @@ def main() -> int:
         controller.connect()
         if args.enable_motion or args.wait_for_ready:
             execution_notice = (
-                "This test will send exactly one T=104 command after Enter.\n"
+                "This test will send exactly one T=1041 command after Enter.\n"
                 if args.enable_motion
                 else "Dry-run only: no command will be sent after Enter.\n"
             )
@@ -227,7 +218,7 @@ def main() -> int:
                     configured_yaw,
                 ],
                 "orientation_order": "Rz(yaw) @ Ry(pitch) @ Rx(roll)",
-                "applied_by_T104": {
+                "applied_by_T1041": {
                     "roll_r": True,
                     "pitch_t": True,
                     "yaw_B": False,
@@ -243,7 +234,6 @@ def main() -> int:
             pitch_rad=target_pitch,
             roll_rad=target_roll,
             gripper_rad=current_gripper,
-            speed=speed,
         )
         report.update(
             {
@@ -294,7 +284,6 @@ def main() -> int:
             pitch_rad=target_pitch,
             roll_rad=target_roll,
             gripper_rad=current_gripper,
-            speed=speed,
         )
         deadline = time.monotonic() + motion_timeout
         stable_samples = 0

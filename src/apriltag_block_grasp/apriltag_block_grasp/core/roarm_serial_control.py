@@ -53,7 +53,7 @@ class RoArmBJointController(RoArmSerialStateReader):
 
 
 class RoArmCartesianController(RoArmBJointController):
-    """RoArm serial connection that can send one T=104 Cartesian command.
+    """RoArm serial connection that can send one M3 T=1041 pose command.
 
     The firmware command exposes Cartesian position, tool pitch (``t``), tool
     roll (``r``), and gripper angle (``g``).  It does not expose an independent
@@ -68,7 +68,6 @@ class RoArmCartesianController(RoArmBJointController):
         pitch_rad: float,
         roll_rad: float,
         gripper_rad: float,
-        speed: float,
     ) -> Dict[str, Any]:
         values = (
             x_mm,
@@ -77,21 +76,17 @@ class RoArmCartesianController(RoArmBJointController):
             pitch_rad,
             roll_rad,
             gripper_rad,
-            speed,
         )
         if not all(math.isfinite(float(value)) for value in values):
             raise ValueError("Cartesian command values must be finite")
-        if float(speed) <= 0.0:
-            raise ValueError("Cartesian speed must be positive")
         return {
-            "T": 104,
+            "T": 1041,
             "x": float(x_mm),
             "y": float(y_mm),
             "z": float(z_mm),
             "t": float(pitch_rad),
             "r": float(roll_rad),
             "g": float(gripper_rad),
-            "spd": float(speed),
         }
 
     def send_cartesian_command(
@@ -102,7 +97,6 @@ class RoArmCartesianController(RoArmBJointController):
         pitch_rad: float,
         roll_rad: float,
         gripper_rad: float,
-        speed: float,
     ) -> Dict[str, Any]:
         if self.serial_port is None:
             raise RuntimeError("RoArm Cartesian controller is not connected")
@@ -113,7 +107,6 @@ class RoArmCartesianController(RoArmBJointController):
             pitch_rad=pitch_rad,
             roll_rad=roll_rad,
             gripper_rad=gripper_rad,
-            speed=speed,
         )
         encoded = (json.dumps(command, separators=(",", ":")) + "\n").encode(
             "utf-8"
