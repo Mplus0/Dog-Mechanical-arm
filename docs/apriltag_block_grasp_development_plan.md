@@ -206,7 +206,8 @@ T_base_object
 - `T_base_eef`：继续沿用现有机械臂状态字段、单位及旋转顺序；
 - `T_eef_camera`：沿用现有手眼标定；
 - `T_camera_tag`：由 AprilTag 四角点、有效边长、相机内参和畸变参数通过 PnP 求得；
-- `T_tag_object`：两个标签共用的完整刚体变换，终点为物块几何中心。
+- `T_tag_object`：两个标签共用的完整刚体变换，终点为物块几何中心；其定义为
+  `X_tag = T_tag_object × X_object`，即把物块坐标系中的点转换到 Tag 坐标系。
 
 标签坐标约定：
 
@@ -220,6 +221,40 @@ T_base_object
 以上是用于 PnP 和齐次变换的右手坐标系。最终实现必须通过调试画面绘制坐标轴验证检测库的实际坐标方向。如果检测库返回约定不同，必须在 `pose_estimator` 内显式转换，不允许仅在配置文档中默认为一致。
 
 “图案上下左右”以标签纸下方说明文字正常可读时的打印方向为准。标签正对相机时，OpenCV 调试图中的红色 X 轴应指向打印纸右侧，绿色 Y 轴应指向打印纸下方；整张图像显示旋转时，坐标轴应与标签纸一起旋转。
+
+物块坐标约定：
+
+```text
+原点：物块几何中心
++X_object：沿物块 100 mm 长边
++Y_object：沿物块 50 mm 短边
++Z_object：从物块底面指向顶面
+```
+
+`tag_to_object.rotation_rpy_deg` 按 `[roll, pitch, yaw]` 保存，表示
+`R_tag_object`，旋转组合顺序为：
+
+```text
+R_tag_object = Rz(yaw) × Ry(pitch) × Rx(roll)
+```
+
+其中 roll、pitch、yaw 分别是绕 X、Y、Z 轴的旋转角，单位为度。
+
+现场已测得物块几何中心相对 Tag 有效黑色区域中心的位置：
+
+```yaml
+tag_to_object:
+  translation_mm: [0.0, -77.0, -25.0]
+  rotation_rpy_deg: [180.0, 0.0, -90.0]
+```
+
+- X 不变，因此 `tx = 0.0 mm`；
+- 几何中心位于图案中心上方 `77 mm`，Tag 的 `+Y` 指向图案下方，因此 `ty = -77.0 mm`；
+- 几何中心位于标签正面方向 `25 mm`，Tag 的 `+Z` 指向标签背面，因此 `tz = -25.0 mm`。
+- 这组数值以物块几何中心为终点，不包含抓取高度或 `base_position_correction_mm`。
+- 根据已确认的示例摆放方向，`rotation_rpy_deg = [180.0, 0.0, -90.0]`：
+  `+X_object` 对应 `-Y_tag`，`+Y_object` 对应 `-X_tag`，`+Z_object` 对应
+  `-Z_tag`。
 
 ### 6.2 PnP 顺序
 

@@ -345,19 +345,28 @@ ros2 run apriltag_block_grasp probe_handeye_chain \
   --sample-count 20
 ```
 
-该探针使用新包内部独立安装的 `config/handeye_cam_to_eef.json`，计算：
+该探针使用新包内部独立安装的 `config/handeye_cam_to_eef.json` 和
+`config/tag_to_object.json`，计算：
 
 ```text
 T_base_tag = T_base_eef @ T_eef_camera @ T_camera_tag
+T_base_object = T_base_tag @ T_tag_object
 ```
 
-它只输出标签中心在 base 下的坐标，不应用 `T_tag_object`、
+当前 `T_tag_object` 使用现场确认值：
+
+```text
+translation_mm = [0.0, -77.0, -25.0]
+rotation_rpy_deg = [180.0, 0.0, -90.0]
+```
+
+探针同时输出标签中心 `base_tag_mm` 和物块几何中心 `base_object_mm`。它不应用
 `base_position_correction_mm` 或旧包的 `base Z + 100 mm`。RGBD 深度关闭，机械臂
 串口仍为只读且不发送命令。
 
 请先反馈 `summary`、`failure_counts`、`per_id_stability` 和最后一条 `samples`。首轮只
-判断静止状态下坐标链是否有限、矩阵方向是否合理以及 `base_tag_mm` 的波动；不把该坐标
-用于机械臂动作。
+判断静止状态下坐标链是否有限、矩阵方向是否合理，以及 `base_tag_mm`、
+`base_object_mm` 的波动；不把这些坐标用于机械臂动作。
 
 ### 受限 B 关节观察角移动工具
 

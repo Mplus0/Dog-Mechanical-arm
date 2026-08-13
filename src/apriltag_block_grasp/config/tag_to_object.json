@@ -1,0 +1,19 @@
+{
+  "description": "X_tag = T_tag_object * X_object. Translation unit: mm; RPY unit: deg.",
+  "source": "Measured from the fixed tag/block arrangement and confirmed from the placement reference image.",
+  "translation_mm": [0.0, -77.0, -25.0],
+  "rotation_rpy_deg": [180.0, 0.0, -90.0],
+  "rotation_order": "Rz(yaw) @ Ry(pitch) @ Rx(roll)",
+  "object_frame": {
+    "origin": "block_geometric_center",
+    "x": "along_100_mm_edge_from_tag_toward_far_end",
+    "y": "along_50_mm_edge_toward_image_left_when_tag_text_is_upright",
+    "z": "from_block_bottom_toward_block_top"
+  },
+  "tag_frame": {
+    "origin": "active_black_tag_center",
+    "x": "printed_left_to_right",
+    "y": "printed_top_to_bottom",
+    "z": "printed_front_to_back_away_from_observer"
+  }
+}

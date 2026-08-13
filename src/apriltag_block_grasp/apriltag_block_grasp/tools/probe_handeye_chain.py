@@ -16,6 +16,7 @@ from apriltag_block_grasp.core.handeye import load_handeye_calibration
 from apriltag_block_grasp.core.pose_estimator import AprilTagPoseEstimator
 from apriltag_block_grasp.core.roarm_serial_readonly import RoArmSerialStateReader
 from apriltag_block_grasp.core.roarm_state import cartesian_pose_from_state
+from apriltag_block_grasp.core.tag_to_object import load_tag_to_object_calibration
 
 
 def distribution(values: List[float]) -> Dict[str, Any]:
@@ -37,11 +38,16 @@ def parse_arguments():
         get_package_share_directory("apriltag_block_grasp")
         + "/config/handeye_cam_to_eef.json"
     )
+    default_tag_to_object = (
+        get_package_share_directory("apriltag_block_grasp")
+        + "/config/tag_to_object.json"
+    )
     parser = argparse.ArgumentParser(
         description="Read-only validation of T_base_eef*T_eef_camera*T_camera_tag."
     )
     parser.add_argument("--port", default="/dev/ttyUSB0")
     parser.add_argument("--handeye-path", default=default_handeye)
+    parser.add_argument("--tag-to-object-path", default=default_tag_to_object)
     parser.add_argument("--sample-count", type=int, default=20)
     parser.add_argument("--max-attempts", type=int, default=80)
     parser.add_argument("--state-timeout-s", type=float, default=0.5)
@@ -59,9 +65,12 @@ def main() -> int:
     report: Dict[str, Any] = {
         "tool": "apriltag_block_grasp.probe_handeye_chain",
         "read_only": True,
-        "formula": "T_base_tag = T_base_eef @ T_eef_camera @ T_camera_tag",
+        "formula": {
+            "base_tag": "T_base_tag = T_base_eef @ T_eef_camera @ T_camera_tag",
+            "base_object": "T_base_object = T_base_tag @ T_tag_object",
+        },
         "tag_size_mm": float(args.tag_size_mm),
-        "tag_to_object_applied": False,
+        "tag_to_object_applied": True,
         "base_position_correction_applied": False,
         "legacy_base_z_plus_100_applied": False,
         "depth_enabled": False,
@@ -72,6 +81,7 @@ def main() -> int:
     }
     try:
         handeye = load_handeye_calibration(args.handeye_path)
+        tag_to_object = load_tag_to_object_calibration(args.tag_to_object_path)
         report["handeye"] = {
             "path": handeye.path,
             "definition": "X_eef = T_eef_camera * X_camera",
@@ -80,6 +90,18 @@ def main() -> int:
             "rotation_orthogonality_error": handeye.orthogonality_error,
             "rotation_determinant": handeye.determinant,
             "metadata": handeye.metadata,
+        }
+        report["tag_to_object"] = {
+            "path": tag_to_object.path,
+            "definition": "X_tag = T_tag_object * X_object",
+            "translation_unit": "mm",
+            "rotation_unit": "deg",
+            "translation_mm": tag_to_object.translation_mm.tolist(),
+            "rotation_rpy_deg": tag_to_object.rotation_rpy_deg.tolist(),
+            "T_tag_object": tag_to_object.matrix_tag_object.tolist(),
+            "rotation_orthogonality_error": tag_to_object.orthogonality_error,
+            "rotation_determinant": tag_to_object.determinant,
+            "metadata": tag_to_object.metadata,
         }
 
         arm.connect()
@@ -130,7 +152,10 @@ def main() -> int:
                     arm_pose.matrix_base_eef @ handeye.matrix_eef_camera
                 )
                 matrix_base_tag = matrix_base_camera @ matrix_camera_tag
-                if not np.all(np.isfinite(matrix_base_tag)):
+                matrix_base_object = (
+                    matrix_base_tag @ tag_to_object.matrix_tag_object
+                )
+                if not np.all(np.isfinite(matrix_base_object)):
                     failure_counts["non_finite_chain"] += 1
                     continue
                 samples.append(
@@ -157,25 +182,48 @@ def main() -> int:
                             "y": float(matrix_base_tag[1, 3]),
                             "z": float(matrix_base_tag[2, 3]),
                         },
+                        "base_object_mm": {
+                            "x": float(matrix_base_object[0, 3]),
+                            "y": float(matrix_base_object[1, 3]),
+                            "z": float(matrix_base_object[2, 3]),
+                        },
                         "reprojection_error_px": float(pose.reprojection_error_px),
                         "T_base_eef": arm_pose.matrix_base_eef.tolist(),
                         "T_base_camera": matrix_base_camera.tolist(),
                         "T_camera_tag": matrix_camera_tag.tolist(),
                         "T_base_tag": matrix_base_tag.tolist(),
+                        "T_tag_object": tag_to_object.matrix_tag_object.tolist(),
+                        "T_base_object": matrix_base_object.tolist(),
                     }
                 )
 
-        by_id = defaultdict(lambda: {"x": [], "y": [], "z": [], "error": []})
+        by_id = defaultdict(
+            lambda: {
+                "tag_x": [],
+                "tag_y": [],
+                "tag_z": [],
+                "object_x": [],
+                "object_y": [],
+                "object_z": [],
+                "error": [],
+            }
+        )
         for sample in samples:
             values = by_id[sample["tag_id"]]
             for axis in ("x", "y", "z"):
-                values[axis].append(sample["base_tag_mm"][axis])
+                values[f"tag_{axis}"].append(sample["base_tag_mm"][axis])
+                values[f"object_{axis}"].append(sample["base_object_mm"][axis])
             values["error"].append(sample["reprojection_error_px"])
         report["samples"] = samples[-10:]
         report["per_id_stability"] = {
             str(tag_id): {
                 "base_tag_mm": {
-                    axis: distribution(values[axis]) for axis in ("x", "y", "z")
+                    axis: distribution(values[f"tag_{axis}"])
+                    for axis in ("x", "y", "z")
+                },
+                "base_object_mm": {
+                    axis: distribution(values[f"object_{axis}"])
+                    for axis in ("x", "y", "z")
                 },
                 "reprojection_error_px": distribution(values["error"]),
             }
