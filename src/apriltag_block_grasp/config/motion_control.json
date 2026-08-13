@@ -29,7 +29,7 @@
     "command_acceleration": 10.0,
     "driver_absolute_range_deg": [-20.0, 20.0],
     "driver_maximum_single_delta_deg": 10.0,
-    "arrival_tolerance_deg": 1.5,
+    "arrival_tolerance_deg": 2.0,
     "arrival_stable_samples": 3,
     "motion_timeout_s": 8.0,
     "maximum_automatic_search_index": 2,

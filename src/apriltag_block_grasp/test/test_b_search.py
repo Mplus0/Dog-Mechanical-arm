@@ -13,7 +13,7 @@ def config():
         minimum_absolute_deg=-20.0,
         maximum_absolute_deg=20.0,
         maximum_single_delta_deg=10.0,
-        arrival_tolerance_deg=1.5,
+        arrival_tolerance_deg=2.0,
         arrival_stable_samples=3,
         motion_timeout_s=8.0,
     )
@@ -37,7 +37,10 @@ def test_return_from_last_search_angle_uses_safe_transition():
 
 
 def test_recovery_route_uses_measured_feedback_instead_of_nominal_target():
-    assert config().route_from_actual_to_b0(-0.439453, -8.877) == [-0.439453]
+    assert config().route_from_actual_to_b0(-0.439453, -8.877) == pytest.approx([
+        -3.877,
+        -0.439453,
+    ])
 
 
 def test_default_field_gate_only_enables_offset_zero():
