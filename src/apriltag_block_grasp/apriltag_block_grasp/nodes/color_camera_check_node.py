@@ -158,9 +158,11 @@ class ColorCameraCheckNode(Node):
     def destroy_node(self) -> None:
         try:
             self.camera.stop()
-            self.get_logger().info("Orbbec color stream stopped.")
+            # SIGINT may already have invalidated the ROS context, so cleanup
+            # messages must not use rosout here.
+            print("Orbbec color stream stopped.", flush=True)
         except Exception as exc:
-            self.get_logger().warn(f"Failed to stop camera cleanly: {exc}")
+            print(f"Failed to stop camera cleanly: {exc}", flush=True)
         try:
             cv2.destroyAllWindows()
         except Exception:
