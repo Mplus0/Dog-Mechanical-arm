@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>apriltag_block_grasp</name>
+  <version>0.0.1</version>
+  <description>Standalone AprilTag-guided block grasp package for RoArm-M3.</description>
+  <maintainer email="sunrise@example.com">sunrise</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>roarm_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
