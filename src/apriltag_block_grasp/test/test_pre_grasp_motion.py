@@ -19,8 +19,6 @@ def config():
         workspace_x_mm=(80.0, 700.0),
         workspace_y_mm=(-450.0, 450.0),
         workspace_z_mm=(-150.0, 380.0),
-        pitch_rad=1.7,
-        roll_rad=0.01,
     )
 
 
@@ -43,22 +41,38 @@ def test_request_builds_t104_and_cannot_override_motion_fields():
         "z": 10.0,
     }
     validated = config().validate_request(
-        request, {"x": 250.0, "y": 0.0, "z": 80.0, "g": 1.9}
+        request,
+        {
+            "x": 250.0,
+            "y": 0.0,
+            "z": 80.0,
+            "tit": 1.23,
+            "r": -0.04,
+            "g": 1.9,
+        },
     )
     assert validated["serial_command"] == {
         "T": 104,
         "x": 300.0,
         "y": -20.0,
         "z": 10.0,
-        "t": 1.7,
-        "r": 0.01,
+        "t": 1.23,
+        "r": -0.04,
         "g": 1.9,
         "spd": 0.18,
     }
+    assert validated["orientation_source"] == "fresh_T1051_tit_and_r"
     with pytest.raises(ValueError, match="cannot override"):
         config().validate_request(
             {**request, "t": 0.0},
-            {"x": 250.0, "y": 0.0, "z": 80.0, "g": 1.9},
+            {
+                "x": 250.0,
+                "y": 0.0,
+                "z": 80.0,
+                "tit": 1.23,
+                "r": -0.04,
+                "g": 1.9,
+            },
         )
 
 
@@ -74,5 +88,26 @@ def test_workspace_and_segment_limit_are_enforced():
                 "y": 0.0,
                 "z": 0.0,
             },
-            {"x": 200.0, "y": 0.0, "z": 0.0, "g": 1.9},
+            {
+                "x": 200.0,
+                "y": 0.0,
+                "z": 0.0,
+                "tit": 1.23,
+                "r": -0.04,
+                "g": 1.9,
+            },
+        )
+
+
+def test_request_requires_fresh_tool_orientation_feedback():
+    with pytest.raises(ValueError, match="current_state.tit"):
+        config().validate_request(
+            {
+                "command_id": "missing-orientation",
+                "type": "move_pre_grasp_segment",
+                "x": 300.0,
+                "y": 0.0,
+                "z": 20.0,
+            },
+            {"x": 250.0, "y": 0.0, "z": 80.0, "r": 0.0, "g": 1.9},
         )

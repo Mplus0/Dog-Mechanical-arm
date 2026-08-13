@@ -70,6 +70,7 @@ class RoArmDriverNode(Node):
         self.declare_parameter(
             "motion_config_path", str(share / "config" / "motion_control.json")
         )
+        # Retained for launch/API compatibility and the later approach/grasp stage.
         self.declare_parameter(
             "grasp_calibration_path",
             str(share / "config" / "grasp_calibration.json"),
@@ -116,8 +117,7 @@ class RoArmDriverNode(Node):
             self.get_parameter("enable_pre_grasp_motion").value
         )
         self.pre_grasp_motion_config = load_pre_grasp_motion_config(
-            str(self.get_parameter("motion_config_path").value),
-            str(self.get_parameter("grasp_calibration_path").value),
+            str(self.get_parameter("motion_config_path").value)
         )
         self.gripper_open_max_state_age_s = self._positive_parameter(
             "gripper_open_max_state_age_s"
@@ -693,6 +693,9 @@ class RoArmDriverNode(Node):
                 "current_xyz_mm": validated["current_xyz_mm"],
                 "target_xyz_mm": validated["target_xyz_mm"],
                 "segment_distance_mm": validated["segment_distance_mm"],
+                "orientation_source": validated["orientation_source"],
+                "held_pitch_rad": validated["held_pitch_rad"],
+                "held_roll_rad": validated["held_roll_rad"],
                 "sent_command": sent_command,
             }
         )

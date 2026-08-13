@@ -125,8 +125,7 @@ class ManipulationTaskNode(Node):
             str(self.get_parameter("grasp_calibration_path").value)
         )
         self.pre_grasp_motion_config = load_pre_grasp_motion_config(
-            str(self.get_parameter("motion_config_path").value),
-            str(self.get_parameter("grasp_calibration_path").value),
+            str(self.get_parameter("motion_config_path").value)
         )
         self.session = LocalizationTaskSession(StableTargetLock(config))
         self.state_publisher = self.create_publisher(String, self.task_state_topic, 10)

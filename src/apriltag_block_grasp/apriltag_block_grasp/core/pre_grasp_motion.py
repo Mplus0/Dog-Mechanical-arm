@@ -34,8 +34,6 @@ class PreGraspMotionConfig:
     workspace_x_mm: Tuple[float, float]
     workspace_y_mm: Tuple[float, float]
     workspace_z_mm: Tuple[float, float]
-    pitch_rad: float
-    roll_rad: float
 
     def __post_init__(self) -> None:
         values = (
@@ -47,8 +45,6 @@ class PreGraspMotionConfig:
             *self.workspace_x_mm,
             *self.workspace_y_mm,
             *self.workspace_z_mm,
-            self.pitch_rad,
-            self.roll_rad,
         )
         if not all(math.isfinite(float(value)) for value in values):
             raise ValueError("pre-grasp motion parameters must be finite")
@@ -140,13 +136,15 @@ class PreGraspMotionConfig:
                 f"requested segment {distance:.3f} mm exceeds "
                 f"maximum_segment_mm={self.maximum_segment_mm:.3f}"
             )
+        pitch_rad = _finite(current_state.get("tit"), "current_state.tit")
+        roll_rad = _finite(current_state.get("r"), "current_state.r")
         gripper_rad = _finite(current_state.get("g"), "current_state.g")
         serial_command = RoArmCartesianController.build_legacy_cartesian_command(
             x_mm=target[0],
             y_mm=target[1],
             z_mm=target[2],
-            pitch_rad=self.pitch_rad,
-            roll_rad=self.roll_rad,
+            pitch_rad=pitch_rad,
+            roll_rad=roll_rad,
             gripper_rad=gripper_rad,
             speed=self.speed,
         )
@@ -155,6 +153,9 @@ class PreGraspMotionConfig:
             "current_xyz_mm": _xyz_dict(current),
             "target_xyz_mm": _xyz_dict(target),
             "segment_distance_mm": distance,
+            "orientation_source": "fresh_T1051_tit_and_r",
+            "held_pitch_rad": pitch_rad,
+            "held_roll_rad": roll_rad,
             "serial_command": serial_command,
         }
 
@@ -169,18 +170,11 @@ def _limits(values: Any, name: str) -> Tuple[float, float]:
     return float(values[0]), float(values[1])
 
 
-def load_pre_grasp_motion_config(
-    motion_config_path: str, grasp_calibration_path: str
-) -> PreGraspMotionConfig:
+def load_pre_grasp_motion_config(motion_config_path: str) -> PreGraspMotionConfig:
     with Path(motion_config_path).open("r", encoding="utf-8") as stream:
         motion_data = json.load(stream)
-    with Path(grasp_calibration_path).open("r", encoding="utf-8") as stream:
-        grasp_data = json.load(stream)
     config = motion_data["pre_grasp_motion"]
     workspace = config["workspace_mm"]
-    orientation = grasp_data["grasp_tool_orientation_rpy_rad"]
-    if not isinstance(orientation, list) or len(orientation) != 3:
-        raise ValueError("grasp_tool_orientation_rpy_rad must contain roll/pitch/yaw")
     return PreGraspMotionConfig(
         speed=float(config["speed"]),
         maximum_segment_mm=float(config["maximum_segment_mm"]),
@@ -192,6 +186,4 @@ def load_pre_grasp_motion_config(
         workspace_x_mm=_limits(workspace["x"], "workspace.x"),
         workspace_y_mm=_limits(workspace["y"], "workspace.y"),
         workspace_z_mm=_limits(workspace["z"], "workspace.z"),
-        roll_rad=float(orientation[0]),
-        pitch_rad=float(orientation[1]),
     )
