@@ -536,9 +536,10 @@ ros2 run apriltag_block_grasp probe_roarm_model
 
 ### 固定观察姿态单次验收
 
-本工具独立采用旧功能包已实机成功的 `T=121` 关节控制路径。根据现场确认，观察动作只发送
-`B=0°、S=0°、E=70°`，顺序为 `B→S→E`，速度和加速度均为 `35`。不发送 T、R、夹爪、
-笛卡尔 XYZ、相机或补光灯命令，T/R 关节保持动作开始前的值。节点不会自动运动。
+本工具独立采用旧功能包已实机成功的 `T=121` 关节控制路径。观察动作发送
+`B=0°、S=0°、E=70°、T=90°、R=-90°`，顺序为 `B→T→R→S→E`，速度和加速度均为
+`35`。不发送夹爪、笛卡尔 XYZ、相机或补光灯命令。相机图像始终使用传感器原始方向，
+不进行软件旋转。节点不会自动运动。
 
 先关闭其他占用 `/dev/ttyUSB0` 的程序，移开物块并清空机械臂运动范围。先执行演练：
 
@@ -547,7 +548,7 @@ ros2 run apriltag_block_grasp move_observation_pose_safe \
   --port /dev/ttyUSB0
 ```
 
-确认 JSON 中三条 `planned_commands`、`gripper_commanded=false`、
+确认 JSON 中五条 `planned_commands`、`gripper_commanded=false`、
 `cartesian_commanded=false` 和 `motion_command_sent=false` 后，才执行一次实机验收：
 
 ```bash
@@ -557,9 +558,46 @@ ros2 run apriltag_block_grasp move_observation_pose_safe \
   --confirmation I_ACCEPT_OBSERVATION_POSE_MOTION
 ```
 
-工具沿用旧包的 `3.0 s` 定时等待，记录 B/S/E 最终误差，以及未控制的 T/R 和夹爪前后差值，
+工具沿用旧包的 `3.0 s` 定时等待，记录 B/S/E/T/R 最终误差和夹爪前后差值，
 不擅自设定关节精度阈值。
 请观察实际相机是否到达正式识别角度并反馈完整 JSON；本轮不继续发送 XYZ、夹爪或抓取命令。
+
+### Stage 4A：物块 base 坐标候选（只读）
+
+`target_candidate_node` 订阅现有 `/apriltag_grasp/pnp` 和 `/roarm_m3/state`，计算：
+
+```text
+T_base_object = T_base_eef × T_eef_camera × T_camera_tag × T_tag_object
+```
+
+并发布 `/apriltag_grasp/target_candidates`。节点不打开相机或机械臂串口，不发送运动命令，
+不应用尚未标定的 `base_position_correction_mm`。本小阶段只发布 ID 0/1 的候选坐标和原始质量
+数据，选择、锁定、稳定阈值及成功/失败状态均明确关闭。
+
+分别启动三个终端：
+
+```bash
+# 终端 1：常驻只读机械臂状态
+ros2 run apriltag_block_grasp roarm_driver_node \
+  --ros-args -p port:=/dev/ttyUSB0
+
+# 终端 2：相机 PnP
+ros2 run apriltag_block_grasp apriltag_pnp_node
+
+# 终端 3：只读坐标候选
+ros2 run apriltag_block_grasp target_candidate_node
+```
+
+读取一条完整消息：
+
+```bash
+ros2 topic echo --once --full-length \
+  /apriltag_grasp/target_candidates std_msgs/msg/String
+```
+
+输出应满足 `motion_commands_enabled=false`、`camera_opened=false`、
+`arm_serial_opened=false`、`selection_enabled=false`、`locking_enabled=false` 和
+`stability_check_enabled=false`。请依次提供仅 ID 0、仅 ID 1、ID 0/1 同时可见时的消息。
 
 ### 单次笛卡尔 XYZ 小步安全工具
 

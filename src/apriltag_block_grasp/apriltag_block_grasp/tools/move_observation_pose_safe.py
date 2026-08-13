@@ -15,9 +15,8 @@ from apriltag_block_grasp.core.roarm_serial_control import RoArmJointController
 
 
 CONFIRMATION = "I_ACCEPT_OBSERVATION_POSE_MOTION"
-COMMANDED_JOINT_NAMES = ("b", "s", "e")
+COMMANDED_JOINT_NAMES = ("b", "s", "e", "t", "r")
 OBSERVED_JOINT_NAMES = ("b", "s", "e", "t", "r")
-PRESERVED_JOINT_NAMES = ("t", "r")
 
 
 def parse_args() -> argparse.Namespace:
@@ -52,15 +51,14 @@ def load_config(path: Path) -> Dict[str, Any]:
         COMMANDED_JOINT_NAMES
     ):
         raise ValueError(
-            "observation_move_order must contain b, s and e exactly once"
+            "observation_move_order must contain b, s, e, t and r exactly once"
         )
     for name in COMMANDED_JOINT_NAMES:
         value = float(pose[name])
         if not math.isfinite(value):
             raise ValueError(f"observation pose {name} must be finite")
-    for name in (*PRESERVED_JOINT_NAMES, "g"):
-        if pose.get(name) is not None:
-            raise ValueError(f"observation pose must not command {name}")
+    if pose.get("g") is not None:
+        raise ValueError("observation pose must not command the gripper")
     return data
 
 
@@ -199,15 +197,6 @@ def main() -> None:
                     None if final_state is None else joint_degrees(final_state)
                 ),
                 "final_joint_error_deg": final_errors,
-                "preserved_joint_delta_deg": (
-                    None
-                    if final_state is None
-                    else {
-                        name: joint_degrees(final_state)[name]
-                        - joint_degrees(initial_state)[name]
-                        for name in PRESERVED_JOINT_NAMES
-                    }
-                ),
                 "final_gripper_rad": (
                     None if final_state is None else float(final_state["g"])
                 ),

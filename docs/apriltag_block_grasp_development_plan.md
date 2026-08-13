@@ -425,8 +425,8 @@ observation_joint_pose_deg:
   b: REQUIRED
   s: REQUIRED
   e: REQUIRED
-  t: PRESERVE
-  r: PRESERVE
+  t: REQUIRED
+  r: REQUIRED
   g: PRESERVE
 
 grasp_tool_orientation:
@@ -446,7 +446,8 @@ grasp_tool_orientation:
 - 当前偏移仅完成单位置测量，状态为暂定，必须经过多个物块位置复测后才能开放自动下降；
 - `reference_clamp_g_rad = 2.408349837` 对应能够夹住但不紧的状态，只作为后续夹爪专项
   标定基准，当前不视为最终闭爪参数；
-- 观察动作只命令 B/S/E，T/R/G 不发送命令并保持动作开始前的关节值；
+- 观察阶段使用固定 B/S/E/T/R 关节姿态，G 不发送命令并保持动作开始前的值；
+- 相机使用原始传感器画面，不做软件旋转；
 - 抓取阶段使用固定末端姿态；
 - 不根据标签姿态调整夹爪朝向；
 - `OPENING_GRIPPER` 在移动预抓取点之前执行；
