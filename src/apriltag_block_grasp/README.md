@@ -286,3 +286,28 @@ ros2 run apriltag_block_grasp probe_pnp_depth_consistency
 请先分别在约 `180 mm`、`250 mm`、`350 mm` 三个距离运行一次并反馈完整 JSON。
 这一小步只收集每个 ID 的差值分布，`depth_rejection_threshold_enabled=false`，不会根据
 单次结果选择阈值或拒绝 PnP，也不会连接机械臂或发送动作。
+
+## 阶段 3A：只读检查机械臂末端位姿
+
+深度检查完成后，先独立验证官方机械臂位姿服务。启动提供 `/get_pose_cmd` 的官方
+RoArm 节点，让机械臂保持静止，然后运行：
+
+```bash
+colcon build --packages-select apriltag_block_grasp --event-handlers console_direct+
+source install/setup.bash
+
+ros2 run apriltag_block_grasp probe_arm_pose
+```
+
+探针默认读取 20 次位姿。官方服务的位置按米读取并乘 `1000` 转成毫米，姿态按弧度读取，
+使用与现有项目一致的 `Rz(yaw) @ Ry(pitch) @ Rx(roll)` 构造 `T_base_eef`。
+它不打开相机、不加载手眼矩阵，也不创建或发送任何运动命令。
+
+请反馈完整 JSON，并检查：
+
+1. `summary.valid=true`，20 次请求全部成功；
+2. `pose_mm_rad` 的位置数量级符合当前机械臂实际位姿；
+3. 静止时 `stability` 中 XYZ 和三个角度的 `peak_to_peak` 足够小；
+4. 每个旋转矩阵的行列式接近 `1`，正交误差接近 `0`。
+
+此项通过后，下一小步才会把已确认的 `T_eef_camera` 复制到新包并执行只读坐标链计算。
