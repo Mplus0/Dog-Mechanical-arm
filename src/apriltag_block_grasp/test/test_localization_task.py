@@ -133,3 +133,16 @@ def test_new_pick_after_terminal_publication_starts_clean_attempt():
     assert task.target_lock.locked_id is None
     result = task.update_candidates(payload(tag_id=1), 1.1)
     assert result["locked_id"] == 1
+
+
+def test_reposition_same_task_resumes_and_new_task_replaces_without_losing_session():
+    task = session()
+    task.accept_command({"task_id": 1, "cmd": "pick"}, 0.0)
+    task.mark_reposition_required("target_not_found")
+    resumed = task.accept_command({"task_id": 1, "cmd": "pick"}, 2.0)
+    assert resumed.action == "resume"
+    assert task.active_task_id == 1
+    task.mark_reposition_required("target_unstable")
+    replaced = task.accept_command({"task_id": 2, "cmd": "pick"}, 3.0)
+    assert replaced.action == "replace"
+    assert task.active_task_id == 2

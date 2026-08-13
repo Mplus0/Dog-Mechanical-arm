@@ -45,6 +45,20 @@ class LocalizationTaskSession:
             return CommandDecision("reject", "unsupported_command", task_id)
 
         if self.active:
+            if self.state == "reposition_required":
+                self.target_lock.reset()
+                self.target_lock.start(now_s)
+                if task_id == self.active_task_id:
+                    self.state = "localizing"
+                    self.last_reason = "reposition_resume_pick"
+                    return CommandDecision("resume", "reposition_resume_pick", task_id)
+                self.active_task_id = task_id
+                self.active_cmd = "pick"
+                self.state = "localizing"
+                self.last_reason = "reposition_task_replaced"
+                self.duplicate_command_count = 0
+                self.last_command_event = None
+                return CommandDecision("replace", "reposition_task_replaced", task_id)
             if task_id == self.active_task_id:
                 self.duplicate_command_count += 1
                 self.last_command_event = {
@@ -64,6 +78,20 @@ class LocalizationTaskSession:
         self.duplicate_command_count = 0
         self.last_command_event = None
         return CommandDecision("accepted", "pick_accepted", task_id)
+
+    def restart_localization(self, now_s: float, reason: str) -> None:
+        if not self.active:
+            raise RuntimeError("cannot restart localization without an active task")
+        self.target_lock.reset()
+        self.target_lock.start(now_s)
+        self.state = "localizing"
+        self.last_reason = reason
+
+    def mark_reposition_required(self, reason: str) -> None:
+        if not self.active:
+            raise RuntimeError("cannot wait for reposition without an active task")
+        self.state = "reposition_required"
+        self.last_reason = reason
 
     def update_candidates(
         self, payload: Dict[str, Any], now_s: float

@@ -766,6 +766,33 @@ ros2 run apriltag_block_grasp roarm_driver_node \
 `state.b`；此时不要发布 `/roarm_m3/cmd`。命令发送结果将发布到
 `/roarm_m3/cmd_result`，后续验收需同时检查结果和新的 `state.b`。
 
+### Stage 4D-2：自动 B 搜索（仅开放 B 关节）
+
+B-only 常驻接口的 `B0-5°` 和返回 B0 实测均通过。采用实测确认的到位规则：连续 3 帧进入
+`±1.5°`。自动搜索必须同时满足两个显式开关：驱动使用
+`enable_b_joint_motion:=true`，任务节点使用 `enable_b_search_motion:=true`；任一开关关闭均不会
+自动搜索。
+
+搜索采样角度仍严格为：
+
+```text
+B0 -> B0-5 -> B0+5 -> B0-10 -> B0+10
+```
+
+相邻搜索角度跨度过大时加入不采样的安全过渡点，确保在 `±1.5°` 到位误差下，下一条命令与
+实际反馈的差仍不超过驱动 `10°` 限制。B 运动状态为 `waiting_b_motion`，该状态下完全停止候选
+采样；每个正式搜索角到位后清空上一角度的 ID 锁定和全部 XYZ 样本，再开始新的 3 秒稳定窗口。
+
+若任意角度定位成功，输出 `target_snapshot_ready`，停在当前 B 角并记录
+`cycle_observation_b_deg` 和 `b_search_offset_deg`。若所有角度失败，机械臂必须先回到周期 B0，
+再输出 `reposition_required`。期间曾看到未完成标签则原因为 `target_unstable`，否则为
+`target_not_found`。进入 `reposition_required` 后保持等待，不再发送 B 命令；机器狗调整并再次
+发送 `pick` 后，沿用原周期 B0，重新从偏移 0 搜索。
+
+首次现场测试只验证“偏移 0 成功”：保持标签在当前视野内，启动显式 B 搜索后发送 `pick`。
+预期在当前角度直接输出快照，驱动的 `accepted_b_joint_command_count` 保持为 0。该测试通过前
+不要进行无标签的完整搜索。
+
 ### 单次笛卡尔 XYZ 小步安全工具
 
 `move_cartesian_fixed_orientation_safe` 用一条 RoArm-M3 `T=1041` 命令验证 XYZ 小步运动。

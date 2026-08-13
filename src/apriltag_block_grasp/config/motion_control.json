@@ -29,7 +29,11 @@
     "command_acceleration": 10.0,
     "driver_absolute_range_deg": [-20.0, 20.0],
     "driver_maximum_single_delta_deg": 10.0,
-    "automatic_search_enabled": false
+    "arrival_tolerance_deg": 1.5,
+    "arrival_stable_samples": 3,
+    "motion_timeout_s": 8.0,
+    "automatic_search_available": true,
+    "automatic_search_default_enabled": false
   },
   "notes": [
     "The full legacy observation joint pose B/T/R/S/E is commanded; the gripper is intentionally omitted.",
