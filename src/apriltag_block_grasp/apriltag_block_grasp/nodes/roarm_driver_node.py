@@ -209,7 +209,7 @@ class RoArmDriverNode(Node):
         if self.enable_observation_motion:
             self.get_logger().warning(
                 "FIXED OBSERVATION MOTION IS ENABLED: only the configured "
-                "B/T/R/S/E sequence is accepted; the gripper is never commanded."
+                "B/T/S/E sequence is accepted; R and the gripper are never commanded."
             )
         if self.enable_diagnostic_hold_test:
             self.get_logger().warning(
@@ -400,6 +400,7 @@ class RoArmDriverNode(Node):
                 "reason": reason,
                 "motion_command_sent": False,
                 "gripper_commanded": False,
+                "r_joint_commanded": False,
             }
         )
 
@@ -460,6 +461,7 @@ class RoArmDriverNode(Node):
                     "reason": f"serial_send_failed:{type(exc).__name__}:{exc}",
                     "motion_command_sent": bool(sent_commands),
                     "gripper_commanded": False,
+                    "r_joint_commanded": False,
                     "sent_commands": sent_commands,
                 }
             )
@@ -476,6 +478,7 @@ class RoArmDriverNode(Node):
                 "reason": "timed_wait_complete",
                 "motion_command_sent": True,
                 "gripper_commanded": False,
+                "r_joint_commanded": False,
                 "completion_mode": "timed",
                 "timed_wait_s": self.observation_motion_config.timed_wait_s,
                 "state_age_s_at_send": state_age_s,

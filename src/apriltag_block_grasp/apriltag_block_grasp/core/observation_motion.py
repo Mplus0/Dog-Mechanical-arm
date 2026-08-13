@@ -8,8 +8,8 @@ from typing import Any, Dict, Tuple
 
 
 OBSERVATION_COMMAND_TYPE = "move_observation_pose"
-OBSERVATION_JOINTS = ("b", "s", "e", "t", "r")
-JOINT_IDS = {"b": 1, "s": 2, "e": 3, "t": 4, "r": 5}
+OBSERVATION_JOINTS = ("b", "s", "e", "t")
+JOINT_IDS = {"b": 1, "s": 2, "e": 3, "t": 4}
 
 
 @dataclass(frozen=True)
@@ -26,10 +26,10 @@ class ObservationMotionConfig:
             self.move_order
         ) != set(OBSERVATION_JOINTS):
             raise ValueError(
-                "observation move order must contain b, s, e, t and r exactly once"
+                "observation move order must contain b, s, e and t exactly once"
             )
         if set(self.pose_deg) != set(OBSERVATION_JOINTS):
-            raise ValueError("observation pose must contain only b, s, e, t and r")
+            raise ValueError("observation pose must contain only b, s, e and t")
         values = (
             *self.pose_deg.values(),
             self.speed_deg_s,
@@ -80,8 +80,8 @@ def load_observation_motion_config(path: str) -> ObservationMotionConfig:
     with Path(path).open("r", encoding="utf-8") as stream:
         data = json.load(stream)
     pose = data["observation_joint_pose_deg"]
-    if pose.get("g") is not None:
-        raise ValueError("observation pose must preserve the gripper")
+    if pose.get("r") is not None or pose.get("g") is not None:
+        raise ValueError("observation pose must preserve R and the gripper")
     completion = data["observation_completion"]
     if completion.get("mode") != "timed":
         raise ValueError("incremental observation motion requires timed completion")

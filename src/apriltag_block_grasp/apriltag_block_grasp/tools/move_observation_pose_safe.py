@@ -15,7 +15,7 @@ from apriltag_block_grasp.core.roarm_serial_control import RoArmJointController
 
 
 CONFIRMATION = "I_ACCEPT_OBSERVATION_POSE_MOTION"
-COMMANDED_JOINT_NAMES = ("b", "s", "e", "t", "r")
+COMMANDED_JOINT_NAMES = ("b", "s", "e", "t")
 OBSERVED_JOINT_NAMES = ("b", "s", "e", "t", "r")
 
 
@@ -51,14 +51,14 @@ def load_config(path: Path) -> Dict[str, Any]:
         COMMANDED_JOINT_NAMES
     ):
         raise ValueError(
-            "observation_move_order must contain b, s, e, t and r exactly once"
+            "observation_move_order must contain b, s, e and t exactly once"
         )
     for name in COMMANDED_JOINT_NAMES:
         value = float(pose[name])
         if not math.isfinite(value):
             raise ValueError(f"observation pose {name} must be finite")
-    if pose.get("g") is not None:
-        raise ValueError("observation pose must not command the gripper")
+    if pose.get("r") is not None or pose.get("g") is not None:
+        raise ValueError("observation pose must preserve R and the gripper")
     return data
 
 

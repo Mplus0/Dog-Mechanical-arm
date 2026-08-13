@@ -11,10 +11,10 @@
     "s": 0.0,
     "e": 70.0,
     "t": 90.0,
-    "r": -90.0,
+    "r": null,
     "g": null
   },
-  "observation_move_order": ["b", "t", "r", "s", "e"],
+  "observation_move_order": ["b", "t", "s", "e"],
   "observation_speed_deg_s": 35.0,
   "observation_acceleration": 35.0,
   "observation_command_interval_s": 0.1,
@@ -37,7 +37,7 @@
     "automatic_search_default_enabled": false
   },
   "notes": [
-    "The full legacy observation joint pose B/T/R/S/E is commanded; the gripper is intentionally omitted.",
+    "The validated observation joint pose commands B/T/S/E only; R is preserved to avoid rotating the camera view and G is preserved to avoid moving the gripper.",
     "Camera frames remain in the original sensor orientation; no software image rotation is applied.",
     "No observation motion may be sent automatically at node startup.",
     "T=104 Cartesian motion remains disabled until the observation pose test passes.",
