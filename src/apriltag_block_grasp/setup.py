@@ -24,6 +24,7 @@ setup(
             "color_camera_check_node = apriltag_block_grasp.nodes.color_camera_check_node:main",
             "apriltag_detection_2d_node = apriltag_block_grasp.nodes.apriltag_detection_2d_node:main",
             "probe_color_calibration = apriltag_block_grasp.tools.probe_color_calibration:main",
+            "apriltag_pnp_node = apriltag_block_grasp.nodes.apriltag_pnp_node:main",
         ],
     },
 )

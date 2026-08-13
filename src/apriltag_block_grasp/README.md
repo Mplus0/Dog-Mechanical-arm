@@ -189,3 +189,51 @@ PnP 使用的 Tag 右手坐标系固定为：
 ```
 
 请反馈探针的完整 JSON 输出。
+
+## 阶段 2A：只检查 AprilTag PnP
+
+标定探针输出 `ready_for_pnp=true` 后运行：
+
+```bash
+colcon build --packages-select apriltag_block_grasp --event-handlers console_direct+
+source install/setup.bash
+
+ros2 run apriltag_block_grasp apriltag_pnp_node --ros-args \
+  -p show_window:=false \
+  -p tag_size_mm:=38.9
+```
+
+查看完整结果：
+
+```bash
+ros2 topic echo --once --full-length \
+  /apriltag_grasp/pnp std_msgs/msg/String
+```
+
+当前节点只输出 `T_camera_tag`：
+
+- 优先 `IPPE_SQUARE`，失败时回退 `ITERATIVE`；
+- 使用 SDK 的 `848×530` 彩色内参与五项 OpenCV 畸变系数；
+- 输出相机坐标下的 `camera_tag_mm`、旋转矩阵、四元数和重投影误差；
+- 不启用 RGBD 深度、手眼变换、机械臂状态或动作。
+
+有图形桌面时可以核对坐标轴：
+
+```bash
+ros2 run apriltag_block_grasp apriltag_pnp_node --ros-args \
+  -p show_window:=true \
+  -p tag_size_mm:=38.9
+```
+
+请在标签正对相机时先测试，并记录：
+
+1. ID 0、ID 1 和两者同时出现时的完整 JSON；
+2. `method` 是否为 `IPPE_SQUARE`；
+3. `camera_tag_mm.z` 是否为正，且随标签远离相机而增大；
+4. 标签向图像右侧移动时 `camera_tag_mm.x` 是否增大；
+5. 标签向图像下方移动时 `camera_tag_mm.y` 是否增大；
+6. 正对相机时旋转矩阵是否接近单位阵；
+7. `reprojection_error_px` 的实际范围；
+8. 调试窗口中红 X、绿 Y、蓝 Z 轴方向是否符合文档约定。
+
+此阶段尚未设定距离、面积和重投影误差拒绝阈值，只记录实测数据；不得据此控制机械臂。
