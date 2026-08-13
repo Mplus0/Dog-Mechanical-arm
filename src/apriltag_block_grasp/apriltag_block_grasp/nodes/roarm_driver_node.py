@@ -28,6 +28,11 @@ from apriltag_block_grasp.core.observation_motion import (
     load_observation_motion_config,
     validate_observation_request,
 )
+from apriltag_block_grasp.core.gripper_motion import (
+    OPEN_GRIPPER_COMMAND_TYPE,
+    load_gripper_open_config,
+    validate_open_gripper_request,
+)
 from apriltag_block_grasp.core.roarm_serial_control import RoArmCartesianController
 
 
@@ -52,6 +57,8 @@ class RoArmDriverNode(Node):
         self.declare_parameter("state_stale_timeout_s", 1.0)
         self.declare_parameter("enable_b_joint_motion", False)
         self.declare_parameter("enable_observation_motion", False)
+        self.declare_parameter("enable_gripper_open_motion", False)
+        self.declare_parameter("gripper_open_max_state_age_s", 0.25)
         self.declare_parameter("observation_max_state_age_s", 0.25)
         share = Path(get_package_share_directory("apriltag_block_grasp"))
         self.declare_parameter(
@@ -88,6 +95,15 @@ class RoArmDriverNode(Node):
         )
         self.observation_motion_config = load_observation_motion_config(
             str(self.get_parameter("motion_config_path").value)
+        )
+        self.gripper_open_config = load_gripper_open_config(
+            str(self.get_parameter("motion_config_path").value)
+        )
+        self.enable_gripper_open_motion = bool(
+            self.get_parameter("enable_gripper_open_motion").value
+        )
+        self.gripper_open_max_state_age_s = self._positive_parameter(
+            "gripper_open_max_state_age_s"
         )
         self.observation_max_state_age_s = self._positive_parameter(
             "observation_max_state_age_s"
@@ -178,6 +194,7 @@ class RoArmDriverNode(Node):
         self._rejected_command_count = 0
         self._accepted_b_joint_command_count = 0
         self._accepted_observation_command_count = 0
+        self._accepted_gripper_open_command_count = 0
         self._last_command_result: Optional[Dict[str, Any]] = None
         self._command_lock = threading.Lock()
         self._serial_open_count = 0
@@ -210,6 +227,11 @@ class RoArmDriverNode(Node):
             self.get_logger().warning(
                 "FIXED OBSERVATION MOTION IS ENABLED: only the configured "
                 "B/T/S/E sequence is accepted; R and the gripper are never commanded."
+            )
+        if self.enable_gripper_open_motion:
+            self.get_logger().warning(
+                "GRIPPER-OPEN MOTION IS ENABLED: only the configured single "
+                "joint-6 open action is accepted; gripper close is unsupported."
             )
         if self.enable_diagnostic_hold_test:
             self.get_logger().warning(
@@ -275,6 +297,9 @@ class RoArmDriverNode(Node):
             self._reject_command(None, "command_must_be_json_object")
             return
         command_type = command.get("type")
+        if command_type == OPEN_GRIPPER_COMMAND_TYPE:
+            self._handle_open_gripper_command(command)
+            return
         if command_type == OBSERVATION_COMMAND_TYPE:
             self._handle_observation_command(command)
             return
@@ -483,6 +508,90 @@ class RoArmDriverNode(Node):
                 "timed_wait_s": self.observation_motion_config.timed_wait_s,
                 "state_age_s_at_send": state_age_s,
                 "sent_commands": sent_commands,
+            }
+        )
+
+    def _reject_open_gripper_command(
+        self, command: Dict[str, Any], reason: str
+    ) -> None:
+        self._reject_command(command.get("type"), reason)
+        self._publish_command_result(
+            {
+                "command_id": command.get("command_id"),
+                "type": OPEN_GRIPPER_COMMAND_TYPE,
+                "accepted": False,
+                "reason": reason,
+                "motion_command_sent": False,
+                "gripper_commanded": False,
+            }
+        )
+
+    def _handle_open_gripper_command(self, command: Dict[str, Any]) -> None:
+        if not self.enable_gripper_open_motion:
+            self._reject_open_gripper_command(
+                command, "gripper_open_motion_not_enabled"
+            )
+            return
+        try:
+            command_id = validate_open_gripper_request(command)
+        except Exception as exc:
+            self._reject_open_gripper_command(
+                command, f"validation_failed:{type(exc).__name__}:{exc}"
+            )
+            return
+
+        now = time.monotonic()
+        with self._state_lock:
+            latest_state = self._latest_state
+            latest_time = self._latest_state_monotonic
+            read_error = self._read_error
+        if read_error is not None:
+            self._reject_open_gripper_command(command, "serial_read_error")
+            return
+        if latest_state is None or latest_time is None:
+            self._reject_open_gripper_command(command, "arm_state_unavailable")
+            return
+        state_age_s = max(0.0, now - latest_time)
+        if state_age_s > self.gripper_open_max_state_age_s:
+            self._reject_open_gripper_command(command, "arm_state_stale")
+            return
+
+        try:
+            item = self.gripper_open_config.serial_command()
+            with self._command_lock:
+                sent_command = self.reader.send_joint_command(
+                    item["joint"], item["angle"], item["spd"], item["acc"]
+                )
+        except Exception as exc:
+            self._serial_bytes_transmitted = self.reader.transmitted_byte_count
+            self._publish_command_result(
+                {
+                    "command_id": command_id,
+                    "type": OPEN_GRIPPER_COMMAND_TYPE,
+                    "accepted": False,
+                    "reason": f"serial_send_failed:{type(exc).__name__}:{exc}",
+                    "motion_command_sent": False,
+                    "gripper_commanded": False,
+                }
+            )
+            return
+
+        self._accepted_gripper_open_command_count += 1
+        self._serial_bytes_transmitted = self.reader.transmitted_byte_count
+        time.sleep(self.gripper_open_config.timed_wait_s)
+        self._publish_command_result(
+            {
+                "command_id": command_id,
+                "type": OPEN_GRIPPER_COMMAND_TYPE,
+                "accepted": True,
+                "reason": "timed_wait_complete",
+                "motion_command_sent": True,
+                "gripper_commanded": True,
+                "gripper_action": "open",
+                "completion_mode": "timed",
+                "timed_wait_s": self.gripper_open_config.timed_wait_s,
+                "state_age_s_at_send": state_age_s,
+                "sent_command": sent_command,
             }
         )
 
@@ -791,14 +900,20 @@ class RoArmDriverNode(Node):
                     )
                 ),
                 "motion_commands_enabled": (
-                    self.enable_b_joint_motion or self.enable_observation_motion
+                    self.enable_b_joint_motion
+                    or self.enable_observation_motion
+                    or self.enable_gripper_open_motion
                 ),
                 "b_joint_motion_enabled": self.enable_b_joint_motion,
                 "observation_motion_enabled": self.enable_observation_motion,
+                "gripper_open_motion_enabled": self.enable_gripper_open_motion,
                 "other_joint_motion_enabled": self.enable_observation_motion,
                 "accepted_b_joint_command_count": self._accepted_b_joint_command_count,
                 "accepted_observation_command_count": (
                     self._accepted_observation_command_count
+                ),
+                "accepted_gripper_open_command_count": (
+                    self._accepted_gripper_open_command_count
                 ),
                 "last_command_result": self._last_command_result,
                 "diagnostic_hold_test_enabled": self.enable_diagnostic_hold_test,

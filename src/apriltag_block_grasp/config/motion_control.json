@@ -22,6 +22,13 @@
     "mode": "timed",
     "timed_wait_s": 3.0
   },
+  "gripper_open": {
+    "status": "approved_for_stage_5_2_single_empty_gripper_test",
+    "angle_deg": 110.0,
+    "speed_deg_s": 25.0,
+    "acceleration": 25.0,
+    "timed_wait_s": 1.0
+  },
   "b_search": {
     "status": "approved_for_stage_4_field_calibration",
     "offsets_deg": [0.0, -5.0, 5.0, -10.0, 10.0],
@@ -40,6 +47,7 @@
     "The validated observation joint pose commands B/T/S/E only; R is preserved to avoid rotating the camera view and G is preserved to avoid moving the gripper.",
     "Camera frames remain in the original sensor orientation; no software image rotation is applied.",
     "No observation motion may be sent automatically at node startup.",
+    "Stage 5.2 enables only one explicitly requested empty gripper-open action; close and automatic task integration remain disabled.",
     "T=104 Cartesian motion remains disabled until the observation pose test passes.",
     "Stage 4D automatic search has passed incremental field enablement for the complete offset sequence 0, -5, +5, -10 and +10 degrees."
   ]
