@@ -14,6 +14,13 @@ from std_msgs.msg import String
 
 from apriltag_block_grasp.core.b_search import load_b_search_config
 from apriltag_block_grasp.core.grasp_plan import load_pre_grasp_plan_config
+from apriltag_block_grasp.core.grasp_sequence import (
+    CARTESIAN_STAGE_COMMAND_TYPE,
+    CLOSE_GRIPPER_COMMAND_TYPE,
+    execution_stage_index,
+    load_pick_sequence_config,
+    stage_is_enabled,
+)
 from apriltag_block_grasp.core.localization_task import LocalizationTaskSession
 from apriltag_block_grasp.core.pre_grasp_motion import (
     PRE_GRASP_SEGMENT_COMMAND_TYPE,
@@ -40,6 +47,8 @@ class ManipulationTaskNode(Node):
         self.declare_parameter("enable_observation_motion", False)
         self.declare_parameter("enable_gripper_open_motion", False)
         self.declare_parameter("enable_pre_grasp_motion", False)
+        self.declare_parameter("enable_pick_sequence_motion", False)
+        self.declare_parameter("execution_limit", "approach")
         self.declare_parameter("observation_result_timeout_s", 5.0)
         self.declare_parameter("observation_state_timeout_s", 2.0)
         self.declare_parameter("gripper_open_result_timeout_s", 2.5)
@@ -77,6 +86,11 @@ class ManipulationTaskNode(Node):
         self.enable_pre_grasp_motion = bool(
             self.get_parameter("enable_pre_grasp_motion").value
         )
+        self.enable_pick_sequence_motion = bool(
+            self.get_parameter("enable_pick_sequence_motion").value
+        )
+        self.execution_limit = str(self.get_parameter("execution_limit").value)
+        execution_stage_index(self.execution_limit)
         self.observation_result_timeout_s = float(
             self.get_parameter("observation_result_timeout_s").value
         )
@@ -126,6 +140,10 @@ class ManipulationTaskNode(Node):
         )
         self.pre_grasp_motion_config = load_pre_grasp_motion_config(
             str(self.get_parameter("motion_config_path").value)
+        )
+        self.pick_sequence_config = load_pick_sequence_config(
+            str(self.get_parameter("motion_config_path").value),
+            str(self.get_parameter("grasp_calibration_path").value),
         )
         self.session = LocalizationTaskSession(StableTargetLock(config))
         self.state_publisher = self.create_publisher(String, self.task_state_topic, 10)
@@ -178,6 +196,15 @@ class ManipulationTaskNode(Node):
         self.pending_pre_grasp_command_accepted = False
         self.pre_grasp_arrival_stable_count = 0
         self.pending_pre_grasp_state_since_monotonic: Optional[float] = None
+        self.pending_sequence_command_id: Optional[str] = None
+        self.pending_sequence_stage: Optional[str] = None
+        self.pending_sequence_target: Optional[Dict[str, float]] = None
+        self.pending_sequence_sent_monotonic: Optional[float] = None
+        self.pending_sequence_command_accepted = False
+        self.sequence_arrival_stable_count = 0
+        self.picked_ids: List[int] = []
+        self.placed_ids: List[int] = []
+        self.carrying_id: Optional[int] = None
         self.timeout_timer = self.create_timer(
             timeout_check_period_s, self.on_timeout_check
         )
@@ -188,8 +215,8 @@ class ManipulationTaskNode(Node):
             f"observation_motion_enabled={self.enable_observation_motion}; "
             f"gripper_open_motion_enabled={self.enable_gripper_open_motion}; "
             f"pre_grasp_motion_enabled={self.enable_pre_grasp_motion}; "
-            "approach, descent, close "
-            "and lift motions remain disabled."
+            f"pick_sequence_motion_enabled={self.enable_pick_sequence_motion}; "
+            f"execution_limit={self.execution_limit}."
         )
 
     @staticmethod
@@ -201,9 +228,9 @@ class ManipulationTaskNode(Node):
 
     def safety_fields(self) -> Dict[str, Any]:
         return {
-            "picked_ids": [],
-            "placed_ids": [],
-            "carrying_id": None,
+            "picked_ids": list(self.picked_ids),
+            "placed_ids": list(self.placed_ids),
+            "carrying_id": self.carrying_id,
             "target_snapshot_only": not self.enable_gripper_open_motion,
             "pick_motion_executed": self.pre_grasp_motion_started,
             "observation_motion_enabled": self.enable_observation_motion,
@@ -214,10 +241,13 @@ class ManipulationTaskNode(Node):
             "pre_grasp_motion_enabled": self.enable_pre_grasp_motion,
             "pre_grasp_motion_started": self.pre_grasp_motion_started,
             "pre_grasp_motion_completed": self.pre_grasp_motion_completed,
+            "pick_sequence_motion_enabled": self.enable_pick_sequence_motion,
+            "execution_limit": self.execution_limit,
             "motion_commands_enabled": (
                 self.enable_b_search_motion or self.enable_observation_motion
                 or self.enable_gripper_open_motion
                 or self.enable_pre_grasp_motion
+                or self.enable_pick_sequence_motion
             ),
             "motion_scope": "+".join(
                 scope
@@ -226,6 +256,7 @@ class ManipulationTaskNode(Node):
                     (self.enable_b_search_motion, "B_joint_search"),
                     (self.enable_gripper_open_motion, "gripper_open"),
                     (self.enable_pre_grasp_motion, "pre_grasp_T104"),
+                    (self.enable_pick_sequence_motion, "remaining_pick_sequence"),
                 )
                 if enabled
             )
@@ -291,6 +322,16 @@ class ManipulationTaskNode(Node):
             )
             return
 
+        if data.get("cmd") != "pick":
+            self.publish_result(
+                data.get("task_id"),
+                "task_rejected",
+                "place_and_dog_communication_not_implemented",
+            )
+            return
+        if self.carrying_id is not None:
+            self.publish_result(data.get("task_id"), "task_rejected", "already_carrying")
+            return
         decision = self.session.accept_command(data, time.monotonic())
         if decision.action == "accepted":
             self.gripper_open_completed = False
@@ -299,6 +340,7 @@ class ManipulationTaskNode(Node):
             self.pre_grasp_plan = None
             self.pre_grasp_segments = []
             self.frozen_target_snapshot = None
+            self.clear_pending_pick_sequence()
             if self.enable_observation_motion:
                 self.observation_motion_completed = False
                 self.start_observation_motion()
@@ -335,6 +377,15 @@ class ManipulationTaskNode(Node):
                 "localizing", f"invalid_candidate_json:{type(exc).__name__}:{exc}"
             )
             return
+        candidates = payload.get("candidates")
+        if isinstance(candidates, list) and self.picked_ids:
+            payload = dict(payload)
+            payload["candidates"] = [
+                candidate
+                for candidate in candidates
+                if not isinstance(candidate, dict)
+                or candidate.get("tag_id") not in self.picked_ids
+            ]
         result = self.session.update_candidates(payload, time.monotonic())
         if result is not None:
             self.handle_localization_result(result)
@@ -356,6 +407,12 @@ class ManipulationTaskNode(Node):
             return
         if self.session.state == "waiting_pre_grasp_state":
             self.check_pre_grasp_state_timeout()
+            return
+        if self.session.state == "waiting_pick_cartesian":
+            self.check_pick_sequence_timeout()
+            return
+        if self.session.state == "waiting_close_gripper":
+            self.check_pick_sequence_timeout()
             return
         if self.session.active and self.session.state == "waiting_b_motion":
             self.check_b_motion_timeout()
@@ -447,6 +504,9 @@ class ManipulationTaskNode(Node):
             return
         if self.session.active and self.session.state == "waiting_pre_grasp_motion":
             self.update_pre_grasp_arrival(payload)
+            return
+        if self.session.active and self.session.state == "waiting_pick_cartesian":
+            self.update_pick_cartesian_arrival(payload)
 
     def latest_b_deg_for_preflight(self) -> Optional[float]:
         payload = self.latest_arm_state_payload
@@ -627,6 +687,12 @@ class ManipulationTaskNode(Node):
             and result.get("command_id") == self.pending_pre_grasp_command_id
         ):
             self.handle_pre_grasp_command_result(result)
+            return
+        if (
+            self.pending_sequence_command_id is not None
+            and result.get("command_id") == self.pending_sequence_command_id
+        ):
+            self.handle_pick_sequence_command_result(result)
             return
         if self.pending_b_command_id is None:
             return
@@ -929,14 +995,17 @@ class ManipulationTaskNode(Node):
                 "last_pre_grasp_command_id": completed_command_id,
             }
         )
-        self.publish_state("pre_grasp_reached", "pre_grasp_motion_complete", snapshot)
-        self.publish_result(
-            self.session.active_task_id,
-            "pre_grasp_reached",
-            "pre_grasp_motion_complete",
-            snapshot,
+        self.frozen_target_snapshot = snapshot
+        if self.enable_pick_sequence_motion and stage_is_enabled(
+            self.execution_limit, "approach"
+        ):
+            self.start_pick_cartesian_stage(
+                "approach", self.pre_grasp_plan["approach_tcp_mm"]
+            )
+            return
+        self.finish_at_execution_limit(
+            "pre_grasp", "pre_grasp_reached", "pre_grasp_motion_complete", snapshot
         )
-        self.session.finish_terminal()
 
     def check_pre_grasp_motion_timeout(self) -> None:
         if self.pending_pre_grasp_sent_monotonic is None:
@@ -965,6 +1034,189 @@ class ManipulationTaskNode(Node):
         self.publish_result(
             self.session.active_task_id, "motion_failed", reason, snapshot
         )
+        self.session.finish_terminal()
+
+    def clear_pending_pick_sequence(self) -> None:
+        self.pending_sequence_command_id = None
+        self.pending_sequence_stage = None
+        self.pending_sequence_target = None
+        self.pending_sequence_sent_monotonic = None
+        self.pending_sequence_command_accepted = False
+        self.sequence_arrival_stable_count = 0
+
+    def finish_at_execution_limit(
+        self, stage: str, result: str, reason: str, extra: Dict[str, Any]
+    ) -> None:
+        payload = {**extra, "completed_stage": stage, "execution_limit_reached": True}
+        self.publish_state(result, reason, payload)
+        self.publish_result(self.session.active_task_id, result, reason, payload)
+        self.session.finish_terminal()
+
+    def start_pick_cartesian_stage(
+        self, stage: str, target: Dict[str, Any], relative_to_current_z: bool = False
+    ) -> None:
+        if relative_to_current_z:
+            payload = self.latest_arm_state_payload or {}
+            state = payload.get("state")
+            if not bool(payload.get("state_valid", False)) or not isinstance(state, dict):
+                self.fail_pick_sequence("fresh_state_for_lift_unavailable", {})
+                return
+            try:
+                target = {
+                    "x": float(state["x"]),
+                    "y": float(state["y"]),
+                    "z": float(state["z"])
+                    + self.pick_sequence_config.lift_relative_z_mm,
+                }
+            except (KeyError, TypeError, ValueError) as exc:
+                self.fail_pick_sequence(
+                    "lift_target_invalid", {"error": f"{type(exc).__name__}:{exc}"}
+                )
+                return
+        command_id = f"task-{self.session.active_task_id}-{stage}"
+        self.pending_sequence_command_id = command_id
+        self.pending_sequence_stage = stage
+        self.pending_sequence_target = {axis: float(target[axis]) for axis in "xyz"}
+        self.pending_sequence_sent_monotonic = time.monotonic()
+        self.pending_sequence_command_accepted = False
+        self.sequence_arrival_stable_count = 0
+        self.session.state = "waiting_pick_cartesian"
+        self.session.last_reason = f"{stage}_motion_requested"
+        self.publish_json(
+            self.arm_command_publisher,
+            {
+                "command_id": command_id,
+                "type": CARTESIAN_STAGE_COMMAND_TYPE,
+                "stage": stage,
+                **self.pending_sequence_target,
+            },
+        )
+        self.publish_state(
+            "waiting_pick_cartesian",
+            f"{stage}_motion_requested",
+            {"pick_stage": stage, "stage_target_mm": self.pending_sequence_target},
+        )
+
+    def handle_pick_sequence_command_result(self, result: Dict[str, Any]) -> None:
+        stage = self.pending_sequence_stage
+        if not bool(result.get("accepted", False)):
+            self.fail_pick_sequence(f"{stage}_command_rejected", {"driver_result": result})
+            return
+        if stage == "close_gripper":
+            if result.get("reason") != "timed_wait_complete":
+                self.fail_pick_sequence(
+                    "close_gripper_completion_invalid", {"driver_result": result}
+                )
+                return
+            self.clear_pending_pick_sequence()
+            if stage_is_enabled(self.execution_limit, "lift"):
+                self.start_pick_cartesian_stage("lift", {}, relative_to_current_z=True)
+                return
+            self.finish_at_execution_limit(
+                "close_gripper",
+                "grasp_closed",
+                "close_gripper_complete",
+                self.frozen_target_snapshot or {},
+            )
+            return
+        if result.get("reason") != "command_sent":
+            self.fail_pick_sequence(
+                f"{stage}_command_result_invalid", {"driver_result": result}
+            )
+            return
+        self.pending_sequence_command_accepted = True
+
+    def update_pick_cartesian_arrival(self, payload: Dict[str, Any]) -> None:
+        if (
+            not self.pending_sequence_command_accepted
+            or self.pending_sequence_sent_monotonic is None
+            or self.pending_sequence_target is None
+            or time.monotonic() - self.pending_sequence_sent_monotonic
+            < self.pick_sequence_config.cartesian.minimum_wait_s
+        ):
+            return
+        state = payload.get("state")
+        if not bool(payload.get("state_valid", False)) or not isinstance(state, dict):
+            return
+        try:
+            actual = tuple(float(state[axis]) for axis in "xyz")
+            target = tuple(float(self.pending_sequence_target[axis]) for axis in "xyz")
+        except (KeyError, TypeError, ValueError):
+            return
+        error_mm = math.dist(actual, target)
+        if error_mm <= self.pick_sequence_config.cartesian.position_tolerance_mm:
+            self.sequence_arrival_stable_count += 1
+        else:
+            self.sequence_arrival_stable_count = 0
+        if self.sequence_arrival_stable_count < self.pick_sequence_config.cartesian.arrival_stable_samples:
+            return
+        stage = str(self.pending_sequence_stage)
+        snapshot = dict(self.frozen_target_snapshot or {})
+        snapshot.update({"completed_stage": stage, "stage_final_error_mm": error_mm})
+        self.clear_pending_pick_sequence()
+        if stage == "approach":
+            if stage_is_enabled(self.execution_limit, "final_grasp"):
+                self.start_pick_cartesian_stage(
+                    "final_grasp", self.pre_grasp_plan["final_grasp_tcp_mm"]
+                )
+                return
+            self.finish_at_execution_limit(
+                "approach", "approach_reached", "approach_motion_complete", snapshot
+            )
+            return
+        if stage == "final_grasp":
+            if stage_is_enabled(self.execution_limit, "close_gripper"):
+                self.start_close_gripper()
+                return
+            self.finish_at_execution_limit(
+                "final_grasp", "final_grasp_reached", "final_grasp_motion_complete", snapshot
+            )
+            return
+        if stage == "lift":
+            selected_id = int(snapshot["selected_tag_id"])
+            if selected_id not in self.picked_ids:
+                self.picked_ids.append(selected_id)
+            self.carrying_id = selected_id
+            snapshot["execution_limit_reached"] = True
+            self.publish_state("pick_success", "lift_complete", snapshot)
+            self.publish_result(self.session.active_task_id, "pick_success", "lift_complete", snapshot)
+            self.session.finish_terminal()
+
+    def start_close_gripper(self) -> None:
+        command_id = f"task-{self.session.active_task_id}-close-gripper"
+        self.pending_sequence_command_id = command_id
+        self.pending_sequence_stage = "close_gripper"
+        self.pending_sequence_sent_monotonic = time.monotonic()
+        self.pending_sequence_command_accepted = False
+        self.session.state = "waiting_close_gripper"
+        self.session.last_reason = "close_gripper_requested"
+        self.publish_json(
+            self.arm_command_publisher,
+            {"command_id": command_id, "type": CLOSE_GRIPPER_COMMAND_TYPE},
+        )
+        self.publish_state("waiting_close_gripper", "close_gripper_requested")
+
+    def check_pick_sequence_timeout(self) -> None:
+        if self.pending_sequence_sent_monotonic is None:
+            return
+        timeout_s = (
+            self.pick_sequence_config.close_gripper.timed_wait_s + 2.0
+            if self.pending_sequence_stage == "close_gripper"
+            else self.pick_sequence_config.cartesian.motion_timeout_s
+        )
+        if time.monotonic() - self.pending_sequence_sent_monotonic >= timeout_s:
+            self.fail_pick_sequence(
+                f"{self.pending_sequence_stage}_motion_timeout",
+                {"arrival_stable_count": self.sequence_arrival_stable_count},
+            )
+
+    def fail_pick_sequence(self, reason: str, detail: Dict[str, Any]) -> None:
+        task_id = self.session.active_task_id
+        stage = self.pending_sequence_stage
+        self.clear_pending_pick_sequence()
+        payload = {**(self.frozen_target_snapshot or {}), **detail, "failed_stage": stage}
+        self.publish_state("pick_failed", reason, payload)
+        self.publish_result(task_id, "motion_failed", reason, payload)
         self.session.finish_terminal()
 
     def check_gripper_open_timeout(self) -> None:

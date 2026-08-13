@@ -33,6 +33,12 @@ from apriltag_block_grasp.core.gripper_motion import (
     load_gripper_open_config,
     validate_open_gripper_request,
 )
+from apriltag_block_grasp.core.grasp_sequence import (
+    CARTESIAN_STAGE_COMMAND_TYPE,
+    CLOSE_GRIPPER_COMMAND_TYPE,
+    execution_stage_index,
+    load_pick_sequence_config,
+)
 from apriltag_block_grasp.core.pre_grasp_motion import (
     PRE_GRASP_SEGMENT_COMMAND_TYPE,
     load_pre_grasp_motion_config,
@@ -63,6 +69,8 @@ class RoArmDriverNode(Node):
         self.declare_parameter("enable_observation_motion", False)
         self.declare_parameter("enable_gripper_open_motion", False)
         self.declare_parameter("enable_pre_grasp_motion", False)
+        self.declare_parameter("enable_pick_sequence_motion", False)
+        self.declare_parameter("execution_limit", "approach")
         self.declare_parameter("gripper_open_max_state_age_s", 0.25)
         self.declare_parameter("pre_grasp_max_state_age_s", 0.25)
         self.declare_parameter("observation_max_state_age_s", 0.25)
@@ -116,8 +124,17 @@ class RoArmDriverNode(Node):
         self.enable_pre_grasp_motion = bool(
             self.get_parameter("enable_pre_grasp_motion").value
         )
+        self.enable_pick_sequence_motion = bool(
+            self.get_parameter("enable_pick_sequence_motion").value
+        )
+        self.execution_limit = str(self.get_parameter("execution_limit").value)
+        execution_stage_index(self.execution_limit)
         self.pre_grasp_motion_config = load_pre_grasp_motion_config(
             str(self.get_parameter("motion_config_path").value)
+        )
+        self.pick_sequence_config = load_pick_sequence_config(
+            str(self.get_parameter("motion_config_path").value),
+            str(self.get_parameter("grasp_calibration_path").value),
         )
         self.gripper_open_max_state_age_s = self._positive_parameter(
             "gripper_open_max_state_age_s"
@@ -216,6 +233,8 @@ class RoArmDriverNode(Node):
         self._accepted_observation_command_count = 0
         self._accepted_gripper_open_command_count = 0
         self._accepted_pre_grasp_segment_command_count = 0
+        self._accepted_cartesian_stage_command_count = 0
+        self._accepted_close_gripper_command_count = 0
         self._last_command_result: Optional[Dict[str, Any]] = None
         self._command_lock = threading.Lock()
         self._serial_open_count = 0
@@ -323,6 +342,12 @@ class RoArmDriverNode(Node):
             self._reject_command(None, "command_must_be_json_object")
             return
         command_type = command.get("type")
+        if command_type == CARTESIAN_STAGE_COMMAND_TYPE:
+            self._handle_cartesian_stage_command(command)
+            return
+        if command_type == CLOSE_GRIPPER_COMMAND_TYPE:
+            self._handle_close_gripper_command(command)
+            return
         if command_type == OPEN_GRIPPER_COMMAND_TYPE:
             self._handle_open_gripper_command(command)
             return
@@ -700,6 +725,135 @@ class RoArmDriverNode(Node):
             }
         )
 
+    def _reject_pick_sequence_command(
+        self, command: Dict[str, Any], reason: str
+    ) -> None:
+        self._reject_command(command.get("type"), reason)
+        self._publish_command_result(
+            {
+                "command_id": command.get("command_id"),
+                "type": command.get("type"),
+                "stage": command.get("stage"),
+                "accepted": False,
+                "reason": reason,
+                "motion_command_sent": False,
+                "execution_limit": self.execution_limit,
+            }
+        )
+
+    def _fresh_pick_state(self, command: Dict[str, Any]) -> Optional[Tuple[Dict[str, Any], float]]:
+        now = time.monotonic()
+        with self._state_lock:
+            latest = None if self._latest_state is None else dict(self._latest_state)
+            latest_time = self._latest_state_monotonic
+            read_error = self._read_error
+        if read_error is not None:
+            self._reject_pick_sequence_command(command, "serial_read_error")
+            return None
+        if latest is None or latest_time is None:
+            self._reject_pick_sequence_command(command, "arm_state_unavailable")
+            return None
+        state_age_s = max(0.0, now - latest_time)
+        if state_age_s > self.pre_grasp_max_state_age_s:
+            self._reject_pick_sequence_command(command, "arm_state_stale")
+            return None
+        return latest, state_age_s
+
+    def _handle_cartesian_stage_command(self, command: Dict[str, Any]) -> None:
+        if not self.enable_pick_sequence_motion:
+            self._reject_pick_sequence_command(command, "pick_sequence_motion_not_enabled")
+            return
+        fresh = self._fresh_pick_state(command)
+        if fresh is None:
+            return
+        latest, state_age_s = fresh
+        try:
+            validated = self.pick_sequence_config.cartesian.validate_request(
+                command, latest, self.execution_limit
+            )
+            item = validated["serial_command"]
+            item["t"] = self.pick_sequence_config.grasp_pitch_rad
+            item["r"] = self.pick_sequence_config.grasp_roll_rad
+            with self._command_lock:
+                sent_command = self.reader.send_legacy_cartesian_command(
+                    x_mm=item["x"],
+                    y_mm=item["y"],
+                    z_mm=item["z"],
+                    pitch_rad=item["t"],
+                    roll_rad=item["r"],
+                    gripper_rad=item["g"],
+                    speed=item["spd"],
+                )
+        except Exception as exc:
+            self._serial_bytes_transmitted = self.reader.transmitted_byte_count
+            self._reject_pick_sequence_command(
+                command, f"validation_or_send_failed:{type(exc).__name__}:{exc}"
+            )
+            return
+        self._accepted_cartesian_stage_command_count += 1
+        self._serial_bytes_transmitted = self.reader.transmitted_byte_count
+        self._publish_command_result(
+            {
+                "command_id": validated["command_id"],
+                "type": CARTESIAN_STAGE_COMMAND_TYPE,
+                "stage": validated["stage"],
+                "accepted": True,
+                "reason": "command_sent",
+                "motion_command_sent": True,
+                "execution_limit": self.execution_limit,
+                "state_age_s_at_send": state_age_s,
+                "current_xyz_mm": validated["current_xyz_mm"],
+                "target_xyz_mm": validated["target_xyz_mm"],
+                "segment_distance_mm": validated["segment_distance_mm"],
+                "orientation_source": (
+                    "fixed_grasp_pitch_roll_calibration_yaw_selected_by_firmware_ik"
+                ),
+                "sent_command": sent_command,
+            }
+        )
+
+    def _handle_close_gripper_command(self, command: Dict[str, Any]) -> None:
+        if not self.enable_pick_sequence_motion:
+            self._reject_pick_sequence_command(command, "pick_sequence_motion_not_enabled")
+            return
+        fresh = self._fresh_pick_state(command)
+        if fresh is None:
+            return
+        _, state_age_s = fresh
+        try:
+            command_id = self.pick_sequence_config.close_gripper.validate_request(
+                command, self.execution_limit
+            )
+            item = self.pick_sequence_config.close_gripper.serial_command()
+            with self._command_lock:
+                sent_command = self.reader.send_joint_command(
+                    item["joint"], item["angle"], item["spd"], item["acc"]
+                )
+        except Exception as exc:
+            self._serial_bytes_transmitted = self.reader.transmitted_byte_count
+            self._reject_pick_sequence_command(
+                command, f"validation_or_send_failed:{type(exc).__name__}:{exc}"
+            )
+            return
+        self._accepted_close_gripper_command_count += 1
+        self._serial_bytes_transmitted = self.reader.transmitted_byte_count
+        time.sleep(self.pick_sequence_config.close_gripper.timed_wait_s)
+        self._publish_command_result(
+            {
+                "command_id": command_id,
+                "type": CLOSE_GRIPPER_COMMAND_TYPE,
+                "accepted": True,
+                "reason": "timed_wait_complete",
+                "motion_command_sent": True,
+                "execution_limit": self.execution_limit,
+                "gripper_commanded": True,
+                "gripper_action": "close",
+                "state_age_s_at_send": state_age_s,
+                "timed_wait_s": self.pick_sequence_config.close_gripper.timed_wait_s,
+                "sent_command": sent_command,
+            }
+        )
+
     def _handle_b_joint_command(self, command: Dict[str, Any]) -> None:
         if not self.enable_b_joint_motion:
             self._reject_b_joint_command(command, "b_joint_motion_not_enabled")
@@ -1009,14 +1163,21 @@ class RoArmDriverNode(Node):
                     or self.enable_observation_motion
                     or self.enable_gripper_open_motion
                     or self.enable_pre_grasp_motion
+                    or self.enable_pick_sequence_motion
                 ),
                 "b_joint_motion_enabled": self.enable_b_joint_motion,
                 "observation_motion_enabled": self.enable_observation_motion,
                 "gripper_open_motion_enabled": self.enable_gripper_open_motion,
                 "pre_grasp_motion_enabled": self.enable_pre_grasp_motion,
-                "cartesian_motion_enabled": self.enable_pre_grasp_motion,
+                "pick_sequence_motion_enabled": self.enable_pick_sequence_motion,
+                "execution_limit": self.execution_limit,
+                "cartesian_motion_enabled": (
+                    self.enable_pre_grasp_motion or self.enable_pick_sequence_motion
+                ),
                 "other_joint_motion_enabled": (
-                    self.enable_observation_motion or self.enable_pre_grasp_motion
+                    self.enable_observation_motion
+                    or self.enable_pre_grasp_motion
+                    or self.enable_pick_sequence_motion
                 ),
                 "accepted_b_joint_command_count": self._accepted_b_joint_command_count,
                 "accepted_observation_command_count": (
@@ -1027,6 +1188,12 @@ class RoArmDriverNode(Node):
                 ),
                 "accepted_pre_grasp_segment_command_count": (
                     self._accepted_pre_grasp_segment_command_count
+                ),
+                "accepted_cartesian_stage_command_count": (
+                    self._accepted_cartesian_stage_command_count
+                ),
+                "accepted_close_gripper_command_count": (
+                    self._accepted_close_gripper_command_count
                 ),
                 "last_command_result": self._last_command_result,
                 "diagnostic_hold_test_enabled": self.enable_diagnostic_hold_test,

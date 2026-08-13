@@ -687,6 +687,38 @@ B 关节、不控制夹爪，也不执行抓取。定位通过后的结果名为
 ros2 run apriltag_block_grasp manipulation_task_node
 ```
 
+### 完整抓取流水线与分级验收
+
+剩余抓取动作已实现为同一状态机，并由驱动端和任务端共同执行 `execution_limit`：
+
+```text
+pre_grasp -> approach -> final_grasp -> close_gripper -> lift
+```
+
+默认限位为 `approach`。一条命令启动全部节点：
+
+```bash
+ros2 launch apriltag_block_grasp pick_pipeline.launch.py \
+  port:=/dev/ttyUSB0 execution_limit:=approach
+```
+
+另开一个终端监听结果并发送命令：
+
+```bash
+ros2 topic echo --full-length \
+  /apriltag_grasp/task_result std_msgs/msg/String
+
+ros2 topic pub --once /apriltag_grasp/task_cmd std_msgs/msg/String \
+  "{data: '{\"task_id\":401,\"cmd\":\"pick\"}'}"
+```
+
+现场按 `approach`、`final_grasp`、`lift` 三轮逐级测试。`lift` 会包含闭爪；如需在闭爪后、
+抬升前单独停止，可使用 `close_gripper`。完整抬升结束才返回 `pick_success` 并记录 ID。
+闭爪 `55°` 和相对抬升 `80 mm` 来自相同硬件旧包，仍是待现场确认的配置参数。
+
+放置和机器狗最终通信尚未实现。任何非 `pick` 命令都会被拒绝为
+`place_and_dog_communication_not_implemented`，不会发送运动。
+
 分别监听状态和结果：
 
 ```bash
