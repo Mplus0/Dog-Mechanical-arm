@@ -33,8 +33,10 @@ class ManipulationTaskNode(Node):
         self.declare_parameter("arm_command_result_topic", "/roarm_m3/cmd_result")
         self.declare_parameter("enable_b_search_motion", False)
         self.declare_parameter("enable_observation_motion", False)
+        self.declare_parameter("enable_gripper_open_motion", False)
         self.declare_parameter("observation_result_timeout_s", 5.0)
         self.declare_parameter("observation_state_timeout_s", 2.0)
+        self.declare_parameter("gripper_open_result_timeout_s", 2.5)
         self.declare_parameter(
             "stability_config_path", str(share / "config" / "target_stability.json")
         )
@@ -58,6 +60,9 @@ class ManipulationTaskNode(Node):
         self.enable_observation_motion = bool(
             self.get_parameter("enable_observation_motion").value
         )
+        self.enable_gripper_open_motion = bool(
+            self.get_parameter("enable_gripper_open_motion").value
+        )
         self.observation_result_timeout_s = float(
             self.get_parameter("observation_result_timeout_s").value
         )
@@ -74,6 +79,14 @@ class ManipulationTaskNode(Node):
             or self.observation_state_timeout_s <= 0.0
         ):
             raise ValueError("observation_state_timeout_s must be positive")
+        self.gripper_open_result_timeout_s = float(
+            self.get_parameter("gripper_open_result_timeout_s").value
+        )
+        if (
+            not math.isfinite(self.gripper_open_result_timeout_s)
+            or self.gripper_open_result_timeout_s <= 0.0
+        ):
+            raise ValueError("gripper_open_result_timeout_s must be positive")
         timeout_check_period_s = float(
             self.get_parameter("timeout_check_period_s").value
         )
@@ -123,6 +136,10 @@ class ManipulationTaskNode(Node):
         self.pending_observation_command_id: Optional[str] = None
         self.pending_observation_sent_monotonic: Optional[float] = None
         self.pending_observation_state_since_monotonic: Optional[float] = None
+        self.pending_gripper_open_command_id: Optional[str] = None
+        self.pending_gripper_open_sent_monotonic: Optional[float] = None
+        self.frozen_target_snapshot: Optional[Dict[str, Any]] = None
+        self.gripper_open_completed = False
         self.timeout_timer = self.create_timer(
             timeout_check_period_s, self.on_timeout_check
         )
@@ -131,7 +148,8 @@ class ManipulationTaskNode(Node):
             "Manipulation task node started: command-driven localization; "
             f"B_search_motion_enabled={self.enable_b_search_motion}; "
             f"observation_motion_enabled={self.enable_observation_motion}; "
-            "gripper and grasp motions remain disabled."
+            f"gripper_open_motion_enabled={self.enable_gripper_open_motion}; "
+            "pre-grasp, descent, close and lift motions remain disabled."
         )
 
     @staticmethod
@@ -146,28 +164,27 @@ class ManipulationTaskNode(Node):
             "picked_ids": [],
             "placed_ids": [],
             "carrying_id": None,
-            "target_snapshot_only": True,
+            "target_snapshot_only": not self.enable_gripper_open_motion,
             "pick_motion_executed": False,
             "observation_motion_enabled": self.enable_observation_motion,
             "observation_motion_completed": self.observation_motion_completed,
             "b_search_enabled": self.enable_b_search_motion,
-            "gripper_commands_enabled": False,
+            "gripper_commands_enabled": self.enable_gripper_open_motion,
+            "gripper_open_completed": self.gripper_open_completed,
             "motion_commands_enabled": (
                 self.enable_b_search_motion or self.enable_observation_motion
+                or self.enable_gripper_open_motion
             ),
-            "motion_scope": (
-                "fixed_observation_and_B_joint_search"
-                if self.enable_b_search_motion and self.enable_observation_motion
-                else (
-                    "B_joint_search_only"
-                    if self.enable_b_search_motion
-                    else (
-                        "fixed_observation_only"
-                        if self.enable_observation_motion
-                        else "none"
-                    )
+            "motion_scope": "+".join(
+                scope
+                for enabled, scope in (
+                    (self.enable_observation_motion, "fixed_observation"),
+                    (self.enable_b_search_motion, "B_joint_search"),
+                    (self.enable_gripper_open_motion, "gripper_open"),
                 )
-            ),
+                if enabled
+            )
+            or "none",
             "b_search_maximum_index": (
                 self.b_search_config.maximum_automatic_search_index
                 if self.enable_b_search_motion
@@ -231,6 +248,8 @@ class ManipulationTaskNode(Node):
 
         decision = self.session.accept_command(data, time.monotonic())
         if decision.action == "accepted":
+            self.gripper_open_completed = False
+            self.frozen_target_snapshot = None
             if self.enable_observation_motion:
                 self.observation_motion_completed = False
                 self.start_observation_motion()
@@ -280,6 +299,9 @@ class ManipulationTaskNode(Node):
         if self.session.state == "waiting_observation_state":
             self.check_observation_state_timeout()
             return
+        if self.session.state == "waiting_gripper_open":
+            self.check_gripper_open_timeout()
+            return
         if self.session.active and self.session.state == "waiting_b_motion":
             self.check_b_motion_timeout()
             return
@@ -303,6 +325,10 @@ class ManipulationTaskNode(Node):
                 "cycle_observation_b_deg": self.cycle_observation_b_deg,
                 "b_search_offset_deg": self.current_search_offset_deg(),
             }
+            if self.enable_gripper_open_motion:
+                self.frozen_target_snapshot = dict(snapshot)
+                self.start_gripper_open()
+                return
             self.publish_state("snapshot_ready", "stable_target_ready", snapshot)
             self.publish_result(
                 task_id, "target_snapshot_ready", "stable_target_ready", snapshot
@@ -528,6 +554,12 @@ class ManipulationTaskNode(Node):
         ):
             self.handle_observation_result(result)
             return
+        if (
+            self.pending_gripper_open_command_id is not None
+            and result.get("command_id") == self.pending_gripper_open_command_id
+        ):
+            self.handle_gripper_open_result(result)
+            return
         if self.pending_b_command_id is None:
             return
         if result.get("command_id") != self.pending_b_command_id:
@@ -619,6 +651,71 @@ class ManipulationTaskNode(Node):
         self.pending_observation_state_since_monotonic = None
         self.publish_state("observation_motion_failed", reason, detail)
         self.publish_result(task_id, "motion_failed", reason, detail)
+        self.session.finish_terminal()
+
+    def start_gripper_open(self) -> None:
+        command_id = f"task-{self.session.active_task_id}-open-gripper"
+        self.pending_gripper_open_command_id = command_id
+        self.pending_gripper_open_sent_monotonic = time.monotonic()
+        self.session.state = "waiting_gripper_open"
+        self.session.last_reason = "gripper_open_requested"
+        self.publish_json(
+            self.arm_command_publisher,
+            {"command_id": command_id, "type": "open_gripper"},
+        )
+        self.publish_state(
+            "waiting_gripper_open",
+            "gripper_open_requested",
+            self.frozen_target_snapshot,
+        )
+
+    def handle_gripper_open_result(self, result: Dict[str, Any]) -> None:
+        self.pending_gripper_open_command_id = None
+        self.pending_gripper_open_sent_monotonic = None
+        if not bool(result.get("accepted", False)):
+            self.fail_gripper_open(
+                "gripper_open_command_rejected", {"driver_result": result}
+            )
+            return
+        if result.get("reason") != "timed_wait_complete":
+            self.fail_gripper_open(
+                "gripper_open_completion_invalid", {"driver_result": result}
+            )
+            return
+        self.gripper_open_completed = True
+        snapshot = {} if self.frozen_target_snapshot is None else dict(
+            self.frozen_target_snapshot
+        )
+        snapshot["gripper_driver_result"] = result
+        self.publish_state("gripper_open_ready", "gripper_open_complete", snapshot)
+        self.publish_result(
+            self.session.active_task_id,
+            "gripper_open_ready",
+            "gripper_open_complete",
+            snapshot,
+        )
+        self.session.finish_terminal()
+
+    def check_gripper_open_timeout(self) -> None:
+        if self.pending_gripper_open_sent_monotonic is None:
+            return
+        if (
+            time.monotonic() - self.pending_gripper_open_sent_monotonic
+            >= self.gripper_open_result_timeout_s
+        ):
+            self.pending_gripper_open_command_id = None
+            self.pending_gripper_open_sent_monotonic = None
+            self.fail_gripper_open("gripper_open_result_timeout", {})
+
+    def fail_gripper_open(self, reason: str, detail: Dict[str, Any]) -> None:
+        snapshot = {} if self.frozen_target_snapshot is None else dict(
+            self.frozen_target_snapshot
+        )
+        snapshot.update(detail)
+        self.publish_state("gripper_open_failed", reason, snapshot)
+        self.publish_result(
+            self.session.active_task_id, "motion_failed", reason, snapshot
+        )
         self.session.finish_terminal()
 
     def check_b_motion_timeout(self) -> None:
