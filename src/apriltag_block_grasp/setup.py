@@ -28,6 +28,7 @@ setup(
             "probe_rgbd_alignment = apriltag_block_grasp.tools.probe_rgbd_alignment:main",
             "probe_pnp_depth_consistency = apriltag_block_grasp.tools.probe_pnp_depth_consistency:main",
             "probe_arm_pose = apriltag_block_grasp.tools.probe_arm_pose:main",
+            "probe_arm_serial_state = apriltag_block_grasp.tools.probe_arm_serial_state:main",
         ],
     },
 )

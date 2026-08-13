@@ -311,3 +311,21 @@ ros2 run apriltag_block_grasp probe_arm_pose
 4. 每个旋转矩阵的行列式接近 `1`，正交误差接近 `0`。
 
 此项通过后，下一小步才会把已确认的 `T_eef_camera` 复制到新包并执行只读坐标链计算。
+
+### 默认方案：直接读取 RoArm 串口状态
+
+如果官方 `/get_pose_cmd` 服务未运行，项目默认采用独立 Python 串口封装。确保没有其他
+节点或程序占用机械臂串口，让机械臂保持静止，然后运行：
+
+```bash
+ros2 run apriltag_block_grasp probe_arm_serial_state \
+  --port /dev/ttyUSB0 \
+  --sample-count 20
+```
+
+该探针只读取机械臂主动上报的 `T=1051` JSON。只读串口类没有发送方法，运行期间
+`serial_bytes_transmitted=0`，不会发送 LED、关节、末端或夹爪命令，也不会打开相机。
+
+探针会列出实际收到的全部字段。只有状态同时包含 `x/y/z/r/b` 和 `tit` 或 `t`，且数值
+有限时，才按当前手眼标定所用约定生成候选 `T_base_eef`。请反馈完整 JSON，确认
+`summary.valid=true`、20 帧均有效，并检查静止状态下 `pose_stability` 的波动。

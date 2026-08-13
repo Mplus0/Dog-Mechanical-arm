@@ -11,6 +11,7 @@
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>python3-serial</exec_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>roarm_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
