@@ -35,6 +35,7 @@ setup(
             "probe_handeye_chain = apriltag_block_grasp.tools.probe_handeye_chain:main",
             "move_b_joint_safe = apriltag_block_grasp.tools.move_b_joint_safe:main",
             "trace_b_joint_motion = apriltag_block_grasp.tools.trace_b_joint_motion:main",
+            "probe_handeye_pair_b = apriltag_block_grasp.tools.probe_handeye_pair_b:main",
         ],
     },
 )

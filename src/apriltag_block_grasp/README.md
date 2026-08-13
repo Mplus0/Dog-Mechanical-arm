@@ -414,3 +414,31 @@ ros2 run apriltag_block_grasp trace_b_joint_motion \
 输出中的 `trace` 默认每 0.25 秒保留一个 B 角和 `tB`，同时汇总最接近目标的时刻、
 观测到的角度范围、最终误差和所有关节的起止差值。诊断结束后保持最终实际姿态，
 不会自动回到起点。
+
+### 同一连接内的成对手眼验证
+
+如果两个独立程序之间的 B 反馈发生变化，使用成对探针保持相机和机械臂串口连接，依次
+完成基准采样、一次 B 命令和第二组采样。必须指定唯一标签 ID；基准组没有完整采到时，
+工具不会发送运动命令。默认仍为演练，只采基准并显示计划命令：
+
+```bash
+ros2 run apriltag_block_grasp probe_handeye_pair_b \
+  --port /dev/ttyUSB0 \
+  --tag-id 1 \
+  --target-b-deg 5.0 \
+  --sample-count 20
+```
+
+确认基准、当前 B 和计划变化量后，才可显式启用：
+
+```bash
+ros2 run apriltag_block_grasp probe_handeye_pair_b \
+  --port /dev/ttyUSB0 \
+  --tag-id 1 \
+  --target-b-deg 5.0 \
+  --sample-count 20 \
+  --enable-motion
+```
+
+显式启用后最多发送一条 `T=121, joint=1`，不会重试或恢复。输出直接给出两组
+`base_tag` 中位数及三轴差值和差值范数；只用于验证手眼链，不用于抓取动作。
