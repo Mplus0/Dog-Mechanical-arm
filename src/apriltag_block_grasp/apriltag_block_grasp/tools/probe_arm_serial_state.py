@@ -86,12 +86,14 @@ def parse_arguments():
     parser.add_argument("--baudrate", type=int, default=115200)
     parser.add_argument("--sample-count", type=int, default=20)
     parser.add_argument("--sample-timeout-s", type=float, default=1.0)
+    parser.add_argument("--max-empty-reads", type=int, default=5)
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_arguments()
     requested_count = max(1, int(args.sample_count))
+    max_empty_reads = max(0, int(args.max_empty_reads))
     reader = RoArmSerialStateReader(
         port=args.port,
         baudrate=args.baudrate,
@@ -114,18 +116,23 @@ def main() -> int:
         reader.connect()
         samples = []
         empty_reads = 0
-        for index in range(requested_count):
+        attempt_index = 0
+        max_read_attempts = requested_count + max_empty_reads
+        while len(samples) < requested_count and attempt_index < max_read_attempts:
             state = reader.read_state(timeout_s=args.sample_timeout_s)
             if state is None:
                 empty_reads += 1
+                attempt_index += 1
                 continue
             samples.append(
                 {
-                    "index": index,
+                    "index": len(samples),
+                    "read_attempt_index": attempt_index,
                     "raw_state": state,
                     "pose_interpretation": pose_from_state(state),
                 }
             )
+            attempt_index += 1
 
         valid_poses = [
             sample["pose_interpretation"]
@@ -149,6 +156,7 @@ def main() -> int:
             "state_frame_count": len(samples),
             "valid_pose_count": len(valid_poses),
             "empty_read_count": empty_reads,
+            "max_empty_reads": max_empty_reads,
             "motion_command_sent": False,
         }
         print(json.dumps(report, ensure_ascii=False, indent=2))

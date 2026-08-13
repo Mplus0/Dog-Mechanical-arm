@@ -329,3 +329,4 @@ ros2 run apriltag_block_grasp probe_arm_serial_state \
 探针会列出实际收到的全部字段。只有状态同时包含 `x/y/z/r/b` 和 `tit` 或 `t`，且数值
 有限时，才按当前手眼标定所用约定生成候选 `T_base_eef`。请反馈完整 JSON，确认
 `summary.valid=true`、20 帧均有效，并检查静止状态下 `pose_stability` 的波动。
+连接后的启动阶段默认允许最多 5 次空读；空读不会作为状态样本，也不会复用旧状态。
