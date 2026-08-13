@@ -525,39 +525,40 @@ ros2 run apriltag_block_grasp probe_roarm_model
 解析的关节、父子连杆、关节限制及相关配置行。不创建 ROS 节点、不连接串口/相机、不调用
 服务，也不启动任何官方 launch。若 Xacro 中仍含表达式，工具只原样报告，不为其猜测数值。
 
-#### 常驻连接内的单次原位保持诊断
+#### 常驻连接内的原位保持诊断（已停用）
 
-常驻只读验收通过后，可以显式启动唯一受支持的运动诊断。该诊断不接收目标坐标；它要求
-驱动已运行至少 5 秒，并检查最近约 1 秒的 `T=1051` 反馈稳定性，然后把最新反馈中的
-`x/y/z/tit/r/g` 原样复制为一条 `T=1041`。节点生命周期内无论预检、发送或执行是否成功，
-都只允许尝试一次。其他 `/roarm_m3/cmd` 仍全部拒绝。
+实测已完成，不得重复。测试在同一常驻串口连接内，把稳定 `T=1051` 反馈中的
+`x/y/z/tit/r/g` 原样复制为一条 `T=1041`，但机械臂在约 0.54 秒内移动到另一姿态：
+`Δx=+5.864 mm`、`Δy=+0.054 mm`、`Δz=-20.310 mm`、`Δtit=+0.058291 rad`
+（约 `+3.340°`），随后保持稳定。该结果证明在当前固件和接口路径中，`T=1051` 的
+笛卡尔反馈不能作为 `T=1041` 的等价原位目标。驱动现已硬拒绝该诊断，即使设置
+`enable_diagnostic_hold_test:=true` 也不会发送命令。
 
-移开物块、清空工作空间并准备断电后，启动显式授权的驱动：
+### 固定观察姿态单次验收
 
-```bash
-ros2 run apriltag_block_grasp roarm_driver_node \
-  --ros-args \
-  -p port:=/dev/ttyUSB0 \
-  -p enable_diagnostic_hold_test:=true
-```
+本工具独立采用旧功能包已实机成功的 `T=121` 关节控制路径。固定目标为
+`B=0°、S=0°、E=70°、T=90°、R=-90°`，顺序为 `B→T→R→S→E`，速度和加速度均为
+`35`。夹爪、笛卡尔 XYZ、相机和补光灯均不控制。节点不会自动运动。
 
-等待至少 5 秒，确认机械臂静止，再在另一个终端发送唯一确认消息：
-
-```bash
-ros2 topic pub --once /roarm_m3/cmd std_msgs/msg/String \
-  '{data: "{\"type\":\"diagnostic_hold_current_pose\",\"confirmation\":\"I_ACCEPT_SINGLE_T1041_HOLD_TEST\"}"}'
-```
-
-观察机械臂约 12 秒，不发布第二条命令。之后读取报告：
+先关闭其他占用 `/dev/ttyUSB0` 的程序，移开物块并清空机械臂运动范围。先执行演练：
 
 ```bash
-ros2 topic echo --once --full-length \
-  /apriltag_grasp/hold_test_report std_msgs/msg/String
+ros2 run apriltag_block_grasp move_observation_pose_safe \
+  --port /dev/ttyUSB0
 ```
 
-若预检失败，报告为 `reason=preflight_rejected` 且 `motion_command_sent=false`；本轮不允许重试，
-应停止节点并反馈报告。若已发送，报告包含发送前状态、唯一报文、约 0.25 秒间隔的反馈轨迹、
-最终差值和各字段最大偏移。出现明显下降或其他异常时立即断电，不等待报告。
+确认 JSON 中五条 `planned_commands`、`gripper_commanded=false`、
+`cartesian_commanded=false` 和 `motion_command_sent=false` 后，才执行一次实机验收：
+
+```bash
+ros2 run apriltag_block_grasp move_observation_pose_safe \
+  --port /dev/ttyUSB0 \
+  --enable-motion \
+  --confirmation I_ACCEPT_OBSERVATION_POSE_MOTION
+```
+
+工具完全沿用旧包的 `3.0 s` 定时等待，只记录五个关节最终误差，不擅自设定关节精度阈值。
+请观察实际相机是否到达正式识别角度并反馈完整 JSON；本轮不继续发送 XYZ、夹爪或抓取命令。
 
 ### 单次笛卡尔 XYZ 小步安全工具
 

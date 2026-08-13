@@ -1,0 +1,30 @@
+{
+  "description": "Standalone RoArm-M3 motion configuration derived from the hardware-validated legacy package.",
+  "status": "observation_pose_requires_apriltag_package_validation",
+  "motion_protocol": {
+    "joint_command_type": 121,
+    "cartesian_command_type": 104,
+    "position_reached_tolerance_mm": 25.0
+  },
+  "observation_joint_pose_deg": {
+    "b": 0.0,
+    "s": 0.0,
+    "e": 70.0,
+    "t": 90.0,
+    "r": -90.0,
+    "g": null
+  },
+  "observation_move_order": ["b", "t", "r", "s", "e"],
+  "observation_speed_deg_s": 35.0,
+  "observation_acceleration": 35.0,
+  "observation_command_interval_s": 0.1,
+  "observation_completion": {
+    "mode": "timed",
+    "timed_wait_s": 3.0
+  },
+  "notes": [
+    "The gripper is intentionally omitted from the observation move.",
+    "No observation motion may be sent automatically at node startup.",
+    "T=104 Cartesian motion remains disabled until the observation pose test passes."
+  ]
+}

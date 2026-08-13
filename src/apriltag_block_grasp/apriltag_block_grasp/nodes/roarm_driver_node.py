@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Persistent RoArm-M3 ROS 2 serial driver with a gated hold diagnostic.
+"""Persistent read-only RoArm-M3 ROS 2 serial driver.
 
-Normal operation is read-only.  An explicit startup parameter plus an exact
-confirmation message can authorize one T=1041 command whose target is copied
-verbatim from fresh, stable T=1051 feedback.  No user-supplied pose is accepted.
+The former gated T=1041 hold diagnostic is retained only for report/history
+compatibility.  Hardware testing proved that copying stable T=1051 Cartesian
+feedback into T=1041 is not an identity operation, so new attempts are rejected.
 """
 
 from collections import deque
@@ -22,6 +22,7 @@ from apriltag_block_grasp.core.roarm_serial_control import RoArmCartesianControl
 
 HOLD_TEST_COMMAND_TYPE = "diagnostic_hold_current_pose"
 HOLD_TEST_CONFIRMATION = "I_ACCEPT_SINGLE_T1041_HOLD_TEST"
+HOLD_TEST_HARDWARE_ENABLED = False
 
 
 class RoArmDriverNode(Node):
@@ -203,6 +204,12 @@ class RoArmDriverNode(Node):
         command_type = command.get("type")
         if command_type != HOLD_TEST_COMMAND_TYPE:
             self._reject_command(command_type, "unsupported_command_type")
+            return
+        if not HOLD_TEST_HARDWARE_ENABLED:
+            self._reject_command(
+                command_type,
+                "diagnostic_hold_test_retired_after_non_identity_hardware_result",
+            )
             return
         if not self.enable_diagnostic_hold_test:
             self._reject_command(command_type, "diagnostic_hold_test_not_enabled")
