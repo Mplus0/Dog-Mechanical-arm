@@ -29,6 +29,8 @@ class LocalizationTaskSession:
         self.active_cmd: Optional[str] = None
         self.state = "idle"
         self.last_reason = "ready"
+        self.duplicate_command_count = 0
+        self.last_command_event: Optional[Dict[str, Any]] = None
 
     @property
     def active(self) -> bool:
@@ -44,6 +46,12 @@ class LocalizationTaskSession:
 
         if self.active:
             if task_id == self.active_task_id:
+                self.duplicate_command_count += 1
+                self.last_command_event = {
+                    "event": "duplicate_active_pick",
+                    "task_id": task_id,
+                    "action": "ignored",
+                }
                 return CommandDecision("ignore", "duplicate_active_pick", task_id)
             return CommandDecision("busy", "arm_busy", task_id)
 
@@ -53,6 +61,8 @@ class LocalizationTaskSession:
         self.active_cmd = "pick"
         self.state = "localizing"
         self.last_reason = "pick_accepted"
+        self.duplicate_command_count = 0
+        self.last_command_event = None
         return CommandDecision("accepted", "pick_accepted", task_id)
 
     def update_candidates(
@@ -91,7 +101,7 @@ class LocalizationTaskSession:
         return finished_task_id, finished_cmd
 
     def state_payload(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "state": self.state,
             "reason": self.last_reason,
             "active_task_id": self.active_task_id,
@@ -99,4 +109,8 @@ class LocalizationTaskSession:
             "locked_id": self.target_lock.locked_id,
             "collected_frame_count": len(self.target_lock.samples),
             "required_frame_count": self.target_lock.config.stable_frame_count,
+            "duplicate_command_count": self.duplicate_command_count,
         }
+        if self.last_command_event is not None:
+            payload["last_command_event"] = dict(self.last_command_event)
+        return payload

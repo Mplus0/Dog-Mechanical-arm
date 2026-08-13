@@ -77,6 +77,7 @@ class StableTargetLock:
         self.last_xyz_peak_to_peak_mm: Optional[Tuple[float, float, float]] = None
         self.best_xyz_peak_to_peak_mm: Optional[Tuple[float, float, float]] = None
         self.best_max_threshold_ratio: Optional[float] = None
+        self.last_input_reason: Optional[str] = None
         self.terminal_result: Optional[Dict[str, Any]] = None
 
     def start(self, now_s: float) -> None:
@@ -96,12 +97,13 @@ class StableTargetLock:
             raise ValueError("now_s must be finite")
         if now_s - self.attempt_started_s < self.config.stable_timeout_s:
             return None
-        detail = (
-            "xyz_peak_to_peak_exceeded"
-            if self.last_xyz_peak_to_peak_mm is not None
-            else "candidate_message_timeout"
-        )
+        detail = self._timeout_detail(self.last_input_reason)
         return self._terminal_failure(now_s, detail)
+
+    def _timeout_detail(self, input_reason: Optional[str]) -> str:
+        if input_reason == "ok" and self.samples:
+            return "insufficient_valid_frames"
+        return input_reason or "candidate_message_timeout"
 
     @staticmethod
     def _finite_float(value: Any) -> Optional[float]:
@@ -240,6 +242,8 @@ class StableTargetLock:
         elif gate_valid:
             sample_reason = "no_allowed_target"
 
+        self.last_input_reason = sample_reason
+
         if xyz is None:
             if self.samples:
                 self.samples.clear()
@@ -288,10 +292,11 @@ class StableTargetLock:
                     self.terminal_result = result
                     return result
                 sample_reason = "xyz_peak_to_peak_exceeded"
+                self.last_input_reason = sample_reason
 
         elapsed = now_s - self.attempt_started_s
         if elapsed >= self.config.stable_timeout_s:
-            return self._terminal_failure(now_s, sample_reason)
+            return self._terminal_failure(now_s, self._timeout_detail(sample_reason))
 
         result = self._base_status(
             "collecting" if self.locked_id is not None else "waiting",

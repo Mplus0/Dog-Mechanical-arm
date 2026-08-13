@@ -722,6 +722,11 @@ motion_commands_enabled=false
 `task_rejected/arm_busy`，原任务仍继续。当前任务产生终态后，下一条新 `pick` 会清空上一次
 锁定和采样窗口并开始独立定位。节点重启会清空全部内存状态。
 
+重复命令事件还会作为 `duplicate_command_count` 和 `last_command_event` 保留在该任务后续
+状态中，避免事件消息被高频候选状态覆盖。超时诊断保留最近一次候选输入原因：上游持续发布
+空候选时为 `no_allowed_target`；只有候选 topic 从未送达时才是
+`candidate_message_timeout`。
+
 ### 单次笛卡尔 XYZ 小步安全工具
 
 `move_cartesian_fixed_orientation_safe` 用一条 RoArm-M3 `T=1041` 命令验证 XYZ 小步运动。

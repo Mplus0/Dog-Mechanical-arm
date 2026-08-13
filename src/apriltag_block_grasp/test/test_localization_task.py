@@ -52,6 +52,30 @@ def test_duplicate_active_pick_is_ignored_and_different_task_is_busy():
     assert other.action == "busy"
     assert other.reason == "arm_busy"
     assert task.active_task_id == 101
+    assert task.state_payload()["duplicate_command_count"] == 1
+    assert task.state_payload()["last_command_event"] == {
+        "event": "duplicate_active_pick",
+        "task_id": 101,
+        "action": "ignored",
+    }
+
+
+def test_duplicate_event_remains_visible_after_candidate_updates():
+    task = session()
+    task.accept_command({"task_id": 101, "cmd": "pick"}, 0.0)
+    task.accept_command({"task_id": 101, "cmd": "pick"}, 0.1)
+    task.update_candidates(
+        {
+            "valid": True,
+            "pnp_stamp": 1.0,
+            "pnp_arm_stamp_delta_s": 0.05,
+            "arm_state_reported_age_s": 0.02,
+            "candidates": [],
+        },
+        0.2,
+    )
+    assert task.state_payload()["duplicate_command_count"] == 1
+    assert task.state_payload()["last_command_event"]["event"] == "duplicate_active_pick"
 
 
 def test_localization_only_finishes_with_snapshot_ready_state():
@@ -77,6 +101,24 @@ def test_timer_reports_target_not_found_without_candidate_messages():
     assert result["reason"] == "target_not_found"
     assert result["failure_detail"] == "candidate_message_timeout"
     assert task.state == "localization_failed"
+
+
+def test_timer_preserves_latest_empty_candidate_reason():
+    task = session(timeout=1.0)
+    task.accept_command({"task_id": 1, "cmd": "pick"}, 10.0)
+    task.update_candidates(
+        {
+            "valid": True,
+            "pnp_stamp": 1.0,
+            "pnp_arm_stamp_delta_s": 0.05,
+            "arm_state_reported_age_s": 0.02,
+            "candidates": [],
+        },
+        10.9,
+    )
+    result = task.check_timeout(11.0)
+    assert result["reason"] == "target_not_found"
+    assert result["failure_detail"] == "no_allowed_target"
 
 
 def test_new_pick_after_terminal_publication_starts_clean_attempt():

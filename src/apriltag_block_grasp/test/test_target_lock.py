@@ -128,3 +128,21 @@ def test_explicit_timeout_check_works_without_any_candidate_update():
     assert result["status"] == "failed"
     assert result["reason"] == "target_not_found"
     assert result["failure_detail"] == "candidate_message_timeout"
+
+
+def test_explicit_timeout_preserves_latest_candidate_reason():
+    lock = StableTargetLock(config(timeout=1.0))
+    lock.start(5.0)
+    lock.update(payload(), 5.9)
+    result = lock.check_timeout(6.0)
+    assert result["reason"] == "target_not_found"
+    assert result["failure_detail"] == "no_allowed_target"
+
+
+def test_timeout_reports_insufficient_valid_frames_instead_of_ok():
+    lock = StableTargetLock(config(frame_count=3, timeout=1.0))
+    lock.start(5.0)
+    lock.update(payload((0, (0.0, 0.0, 0.0))), 5.9)
+    result = lock.check_timeout(6.0)
+    assert result["reason"] == "target_unstable"
+    assert result["failure_detail"] == "insufficient_valid_frames"
