@@ -1,0 +1,33 @@
+{
+  "description": "Provisional fixed grasp calibration for the asymmetric RoArm-M3 gripper.",
+  "definition": "P_base_final_grasp_tcp = P_base_object + final_grasp_tcp_offset_base_mm",
+  "status": "provisional_requires_multi_position_validation",
+  "source": "Manual final-grasp alignment while the Tag, block and arm base remained fixed.",
+  "reference_measurement": {
+    "visual_base_object_median_mm": [272.38075745297806, -48.65544315764794, -109.90925443346569],
+    "manual_final_grasp_tcp_mm": [248.3229238, -15.6384514, -109.2336995]
+  },
+  "final_grasp_tcp_offset_base_mm": [-24.057833652978047, 33.016991757647936, 0.6755549334656905],
+  "grasp_tool_orientation_rpy_rad": [0.012271846, 1.71345654, -0.062893212],
+  "grasp_tool_orientation_order": "Rz(yaw) @ Ry(pitch) @ Rx(roll)",
+  "reference_joint_state_rad": {
+    "b": -0.062893212,
+    "s": 0.730174855,
+    "e": 1.583068173,
+    "t": 0.971009839,
+    "r": 0.012271846,
+    "g": 2.408349837
+  },
+  "gripper": {
+    "mechanism": "left_finger_fixed_right_finger_actuated",
+    "reference_clamp_g_rad": 2.408349837,
+    "reference_condition": "block_held_but_not_tight",
+    "validation_status": "requires_dedicated_grip_test"
+  },
+  "base_position_correction_mm": null,
+  "notes": [
+    "The TCP offset includes asymmetric gripper geometry and any systematic localization error present in this one reference measurement.",
+    "Do not copy this offset into base_position_correction_mm.",
+    "Validate at multiple block positions before enabling automatic descent or gripper closure."
+  ]
+}

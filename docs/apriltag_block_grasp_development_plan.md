@@ -412,10 +412,9 @@ B0 → B0-5 → B0+5 → B0-10 → B0+10
 
 ```yaml
 grasp_geometry:
-  target_xy_offset_mm: [REQUIRED, REQUIRED]
+  final_grasp_tcp_offset_base_mm: [-24.057833653, 33.016991758, 0.675554933]
   pre_grasp_z_offset_mm: REQUIRED
   approach_z_offset_mm: REQUIRED
-  final_grasp_z_offset_mm: REQUIRED
   lift_distance_mm: REQUIRED
 ```
 
@@ -431,11 +430,22 @@ observation_joint_pose_deg:
   g: REQUIRED
 
 grasp_tool_orientation:
-  t_rad: REQUIRED
-  r_rad: REQUIRED
-  g_rad: REQUIRED
+  roll_rad: 0.012271846
+  pitch_rad: 1.713456540
+  yaw_rad: -0.062893212
+  reference_clamp_g_rad: 2.408349837
 ```
 
+- `final_grasp_tcp_offset_base_mm` 的定义是
+  `P_base_final_grasp_tcp - P_base_object`。当前数值来自标签、物块和机械臂底座均未移动时，
+  视觉几何中心 `[272.380757453, -48.655443158, -109.909254433] mm` 与人工最终夹取
+  TCP `[248.322923800, -15.638451400, -109.233699500] mm` 的差；
+- 夹爪为左指固定、右指活动的非对称结构，因此最终TCP不要求与物块几何中心重合；
+- 该偏移包含夹爪几何偏置，也可能包含本次定位中的系统误差，不得复制到
+  `base_position_correction_mm`；
+- 当前偏移仅完成单位置测量，状态为暂定，必须经过多个物块位置复测后才能开放自动下降；
+- `reference_clamp_g_rad = 2.408349837` 对应能够夹住但不紧的状态，只作为后续夹爪专项
+  标定基准，当前不视为最终闭爪参数；
 - 观察阶段使用固定关节姿态；
 - 抓取阶段使用固定末端姿态；
 - 不根据标签姿态调整夹爪朝向；

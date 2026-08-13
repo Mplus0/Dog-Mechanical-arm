@@ -50,3 +50,80 @@ class RoArmBJointController(RoArmSerialStateReader):
             )
         self.transmitted_command_count += 1
         return command
+
+
+class RoArmCartesianController(RoArmBJointController):
+    """RoArm serial connection that can send one T=104 Cartesian command.
+
+    The firmware command exposes Cartesian position, tool pitch (``t``), tool
+    roll (``r``), and gripper angle (``g``).  It does not expose an independent
+    Cartesian yaw/B field; B is selected by the firmware inverse kinematics.
+    """
+
+    @staticmethod
+    def build_cartesian_command(
+        x_mm: float,
+        y_mm: float,
+        z_mm: float,
+        pitch_rad: float,
+        roll_rad: float,
+        gripper_rad: float,
+        speed: float,
+    ) -> Dict[str, Any]:
+        values = (
+            x_mm,
+            y_mm,
+            z_mm,
+            pitch_rad,
+            roll_rad,
+            gripper_rad,
+            speed,
+        )
+        if not all(math.isfinite(float(value)) for value in values):
+            raise ValueError("Cartesian command values must be finite")
+        if float(speed) <= 0.0:
+            raise ValueError("Cartesian speed must be positive")
+        return {
+            "T": 104,
+            "x": float(x_mm),
+            "y": float(y_mm),
+            "z": float(z_mm),
+            "t": float(pitch_rad),
+            "r": float(roll_rad),
+            "g": float(gripper_rad),
+            "spd": float(speed),
+        }
+
+    def send_cartesian_command(
+        self,
+        x_mm: float,
+        y_mm: float,
+        z_mm: float,
+        pitch_rad: float,
+        roll_rad: float,
+        gripper_rad: float,
+        speed: float,
+    ) -> Dict[str, Any]:
+        if self.serial_port is None:
+            raise RuntimeError("RoArm Cartesian controller is not connected")
+        command = self.build_cartesian_command(
+            x_mm=x_mm,
+            y_mm=y_mm,
+            z_mm=z_mm,
+            pitch_rad=pitch_rad,
+            roll_rad=roll_rad,
+            gripper_rad=gripper_rad,
+            speed=speed,
+        )
+        encoded = (json.dumps(command, separators=(",", ":")) + "\n").encode(
+            "utf-8"
+        )
+        written = int(self.serial_port.write(encoded))
+        self.transmitted_byte_count += max(0, written)
+        self.serial_port.flush()
+        if written != len(encoded):
+            raise IOError(
+                f"partial serial write: expected {len(encoded)} bytes, wrote {written}"
+            )
+        self.transmitted_command_count += 1
+        return command

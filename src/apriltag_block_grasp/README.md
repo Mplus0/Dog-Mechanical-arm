@@ -379,6 +379,23 @@ rotation_rpy_deg = [180.0, 0.0, -90.0]
 判断静止状态下坐标链是否有限、矩阵方向是否合理，以及 `base_tag_mm`、
 `base_object_mm` 的波动；不把这些坐标用于机械臂动作。
 
+### 暂定抓取几何配置
+
+`config/grasp_calibration.json` 记录首次人工最终夹取对准结果，但不会被当前只读探针用于
+运动。固定关系为：
+
+```text
+P_base_final_grasp_tcp
+= P_base_object
++ base_position_correction_mm
++ final_grasp_tcp_offset_base_mm
+```
+
+当前 `final_grasp_tcp_offset_base_mm = [-24.058, 33.017, 0.676]`，末端固定姿态
+RPY为 `[0.012272, 1.713457, -0.062893] rad`。夹爪是左指固定、右指活动的非对称结构，
+所以TCP不要求位于物块几何中心。夹爪 `g=2.408350 rad` 仅对应“能够夹住但不紧”的
+暂定状态。上述参数仍需多位置复测和夹爪专项测试，不允许据此直接开放自动下降或闭爪。
+
 ### 受限 B 关节观察角移动工具
 
 手眼链跨位姿验证仅使用 B 关节小角度运动。工具只允许发送一条绝对 B 关节命令，默认
@@ -462,6 +479,55 @@ ros2 run apriltag_block_grasp probe_handeye_pair_b \
 
 显式启用后最多发送一条 `T=121, joint=1`，不会重试或恢复。输出直接给出两组
 `base_tag` 中位数及三轴差值和差值范数；只用于验证手眼链，不用于抓取动作。
+
+### 单次笛卡尔姿态复现安全工具
+
+`move_cartesian_fixed_orientation_safe` 用一条 RoArm `T=104` 命令验证固定抓取姿态。
+固件命令字段为 `x/y/z/t/r/g/spd`：它可以指定 TCP 的 XYZ、工具俯仰 `t`、工具滚转
+`r` 和夹爪 `g`，但没有独立的 yaw/B 字段。B 角由固件逆运动学根据目标位置确定，因此该工具
+不能承诺在不同 XYZ 下保持完整 RPY 不变。
+
+工具默认只演练，不发送命令。它读取当前 `T=1051`，保持当前夹爪开度，以当前 XYZ 加上
+`dx/dy/dz` 作为目标，并从 `config/grasp_calibration.json` 读取标定的 pitch/roll。默认每轴和
+三维总位移都不超过 10 mm，速度为 `0.05`，只允许发送一条命令，不重试、不恢复，也不控制
+相机和补光灯。
+
+首次测试必须移开物块并清空机械臂周围空间。先编译并执行零位移演练：
+
+```bash
+colcon build --packages-select apriltag_block_grasp --event-handlers console_direct+
+source install/setup.bash
+
+ros2 run apriltag_block_grasp move_cartesian_fixed_orientation_safe \
+  --port /dev/ttyUSB0 \
+  --wait-for-ready
+```
+
+串口打开并回位后，使用不占用该串口的控制方式把机械臂调到接近抓取姿态，再按 Enter。
+确认 JSON 中：
+
+1. `requested_delta_xyz_mm` 为 `[0, 0, 0]`；
+2. `target_xyz_mm` 等于打开串口并完成回位后的当前 XYZ；
+3. `planned_command.T=104`；
+4. `planned_command.t/r` 来自抓取标定，`planned_command.g` 等于当前反馈；
+5. `pitch_change_deg` 和 `roll_change_deg` 没有超过安全限制；
+6. `motion_command_sent=false`。
+
+确认机械臂处于无碰撞空间后，才执行首次零位移姿态复现：
+
+```bash
+ros2 run apriltag_block_grasp move_cartesian_fixed_orientation_safe \
+  --port /dev/ttyUSB0 \
+  --enable-motion
+```
+
+串口打开可能使 ESP32 复位并回到固件初始位姿。显式启用运动时，工具会在串口打开后等待
+Enter；此时应再次清空工作空间，确认安全后再按 Enter。工具随后清除旧状态帧、读取当前状态，
+并发送恰好一条命令。首次测试不要设置 `dx/dy/dz`，也不要放置物块。反馈满足 XYZ 误差
+`2 mm`、pitch/roll 误差 `2°` 且连续 3 帧稳定时报告 `target_reached`。
+
+零位移测试通过后，下一轮再单独测试一个不超过 5 mm 的轴向微调；在确认前不要用本工具
+对准、下降或夹取物块。
 
 ### PnP 多解与深度只读诊断
 
