@@ -267,3 +267,22 @@ ros2 run apriltag_block_grasp probe_rgbd_alignment
 
 尺寸相同只是必要条件，不单独证明像素语义已经正确对齐。通过本探针后，再实现 PnP Z
 与 RGBD 深度差的只读现场比较。
+
+## 阶段 2B：只读比较 PnP 与 RGBD 深度
+
+RGBD 对齐能力探针通过后运行：
+
+```bash
+colcon build --packages-select apriltag_block_grasp --event-handlers console_direct+
+source install/setup.bash
+
+ros2 run apriltag_block_grasp probe_pnp_depth_consistency
+```
+
+运行期间保持标签静止且正对相机。命令采集有限帧，使用相同彩色帧完成 AprilTag PnP，
+同时读取对齐深度图中标签中心 `5×5 px` 邻域的中位深度。输出中的
+`pnp_minus_rgbd_mm = pnp_z_mm - rgbd_depth_mm`。
+
+请先分别在约 `180 mm`、`250 mm`、`350 mm` 三个距离运行一次并反馈完整 JSON。
+这一小步只收集每个 ID 的差值分布，`depth_rejection_threshold_enabled=false`，不会根据
+单次结果选择阈值或拒绝 PnP，也不会连接机械臂或发送动作。

@@ -26,6 +26,7 @@ setup(
             "probe_color_calibration = apriltag_block_grasp.tools.probe_color_calibration:main",
             "apriltag_pnp_node = apriltag_block_grasp.nodes.apriltag_pnp_node:main",
             "probe_rgbd_alignment = apriltag_block_grasp.tools.probe_rgbd_alignment:main",
+            "probe_pnp_depth_consistency = apriltag_block_grasp.tools.probe_pnp_depth_consistency:main",
         ],
     },
 )
