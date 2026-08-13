@@ -241,3 +241,29 @@ ros2 run apriltag_block_grasp apriltag_pnp_node --ros-args \
 8. 调试窗口中红 X、绿 Y、蓝 Z 轴方向是否符合文档约定。
 
 此阶段尚未设定距离、面积和重投影误差拒绝阈值，只记录实测数据；不得据此控制机械臂。
+
+## 阶段 2B 前置：探测 RGBD 对齐能力
+
+阶段 2A 的坐标轴、尺度和 XYZ 趋势通过后运行：
+
+```bash
+colcon build --packages-select apriltag_block_grasp --event-handlers console_direct+
+source install/setup.bash
+
+ros2 run apriltag_block_grasp probe_rgbd_alignment
+```
+
+运行时让 ID 0 或 ID 1 保持在画面内。该探针只请求 Orbbec 软件深度到彩色对齐，
+采集有限帧并读取标签中心 `5×5 px` 邻域的中位深度。它不执行 PnP、不连接机械臂、
+不发布动作，也不会把 RGBD 深度作为目标位置来源。
+
+请反馈完整 JSON，并确认：
+
+1. `alignment.request_succeeded=true`；
+2. 彩色和深度尺寸相同，`resolution_mismatch_count=0`；
+3. `depth_scale_mm_values` 为有限正数；
+4. `tag_center_depths` 中能观察到非空的 `median_depth_mm`；
+5. `ready_for_depth_consistency_check=true`。
+
+尺寸相同只是必要条件，不单独证明像素语义已经正确对齐。通过本探针后，再实现 PnP Z
+与 RGBD 深度差的只读现场比较。
