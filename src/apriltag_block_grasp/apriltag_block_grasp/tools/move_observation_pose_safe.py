@@ -15,7 +15,9 @@ from apriltag_block_grasp.core.roarm_serial_control import RoArmJointController
 
 
 CONFIRMATION = "I_ACCEPT_OBSERVATION_POSE_MOTION"
-JOINT_NAMES = ("b", "s", "e", "t", "r")
+COMMANDED_JOINT_NAMES = ("b", "s", "e")
+OBSERVED_JOINT_NAMES = ("b", "s", "e", "t", "r")
+PRESERVED_JOINT_NAMES = ("t", "r")
 
 
 def parse_args() -> argparse.Namespace:
@@ -46,22 +48,25 @@ def load_config(path: Path) -> Dict[str, Any]:
     order = data.get("observation_move_order")
     if not isinstance(pose, dict) or not isinstance(order, list):
         raise ValueError("motion config requires observation pose and move order")
-    if set(order) != set(JOINT_NAMES) or len(order) != len(JOINT_NAMES):
+    if set(order) != set(COMMANDED_JOINT_NAMES) or len(order) != len(
+        COMMANDED_JOINT_NAMES
+    ):
         raise ValueError(
-            "observation_move_order must contain b, s, e, t and r exactly once"
+            "observation_move_order must contain b, s and e exactly once"
         )
-    for name in JOINT_NAMES:
+    for name in COMMANDED_JOINT_NAMES:
         value = float(pose[name])
         if not math.isfinite(value):
             raise ValueError(f"observation pose {name} must be finite")
-    if pose.get("g") is not None:
-        raise ValueError("observation pose must not command the gripper")
+    for name in (*PRESERVED_JOINT_NAMES, "g"):
+        if pose.get(name) is not None:
+            raise ValueError(f"observation pose must not command {name}")
     return data
 
 
 def joint_degrees(state: Dict[str, Any]) -> Dict[str, float]:
     result: Dict[str, float] = {}
-    for name in JOINT_NAMES:
+    for name in OBSERVED_JOINT_NAMES:
         value = float(state[name])
         if not math.isfinite(value):
             raise ValueError(f"state.{name} must be finite")
@@ -181,7 +186,8 @@ def main() -> None:
             feedback_sample_count += 1
             actual = joint_degrees(state)
             errors = {
-                name: actual[name] - float(pose[name]) for name in JOINT_NAMES
+                name: actual[name] - float(pose[name])
+                for name in COMMANDED_JOINT_NAMES
             }
             final_state = state
             final_errors = errors
@@ -193,8 +199,22 @@ def main() -> None:
                     None if final_state is None else joint_degrees(final_state)
                 ),
                 "final_joint_error_deg": final_errors,
+                "preserved_joint_delta_deg": (
+                    None
+                    if final_state is None
+                    else {
+                        name: joint_degrees(final_state)[name]
+                        - joint_degrees(initial_state)[name]
+                        for name in PRESERVED_JOINT_NAMES
+                    }
+                ),
                 "final_gripper_rad": (
                     None if final_state is None else float(final_state["g"])
+                ),
+                "gripper_delta_rad": (
+                    None
+                    if final_state is None
+                    else float(final_state["g"]) - float(initial_state["g"])
                 ),
                 "transmitted_command_count": controller.transmitted_command_count,
                 "transmitted_byte_count": controller.transmitted_byte_count,

@@ -536,9 +536,9 @@ ros2 run apriltag_block_grasp probe_roarm_model
 
 ### 固定观察姿态单次验收
 
-本工具独立采用旧功能包已实机成功的 `T=121` 关节控制路径。固定目标为
-`B=0°、S=0°、E=70°、T=90°、R=-90°`，顺序为 `B→T→R→S→E`，速度和加速度均为
-`35`。夹爪、笛卡尔 XYZ、相机和补光灯均不控制。节点不会自动运动。
+本工具独立采用旧功能包已实机成功的 `T=121` 关节控制路径。根据现场确认，观察动作只发送
+`B=0°、S=0°、E=70°`，顺序为 `B→S→E`，速度和加速度均为 `35`。不发送 T、R、夹爪、
+笛卡尔 XYZ、相机或补光灯命令，T/R 关节保持动作开始前的值。节点不会自动运动。
 
 先关闭其他占用 `/dev/ttyUSB0` 的程序，移开物块并清空机械臂运动范围。先执行演练：
 
@@ -547,7 +547,7 @@ ros2 run apriltag_block_grasp move_observation_pose_safe \
   --port /dev/ttyUSB0
 ```
 
-确认 JSON 中五条 `planned_commands`、`gripper_commanded=false`、
+确认 JSON 中三条 `planned_commands`、`gripper_commanded=false`、
 `cartesian_commanded=false` 和 `motion_command_sent=false` 后，才执行一次实机验收：
 
 ```bash
@@ -557,7 +557,8 @@ ros2 run apriltag_block_grasp move_observation_pose_safe \
   --confirmation I_ACCEPT_OBSERVATION_POSE_MOTION
 ```
 
-工具完全沿用旧包的 `3.0 s` 定时等待，只记录五个关节最终误差，不擅自设定关节精度阈值。
+工具沿用旧包的 `3.0 s` 定时等待，记录 B/S/E 最终误差，以及未控制的 T/R 和夹爪前后差值，
+不擅自设定关节精度阈值。
 请观察实际相机是否到达正式识别角度并反馈完整 JSON；本轮不继续发送 XYZ、夹爪或抓取命令。
 
 ### 单次笛卡尔 XYZ 小步安全工具
