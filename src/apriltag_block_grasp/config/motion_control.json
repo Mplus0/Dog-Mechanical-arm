@@ -22,10 +22,20 @@
     "mode": "timed",
     "timed_wait_s": 3.0
   },
+  "b_search": {
+    "status": "approved_for_stage_4_field_calibration",
+    "offsets_deg": [0.0, -5.0, 5.0, -10.0, 10.0],
+    "command_speed_deg_s": 10.0,
+    "command_acceleration": 10.0,
+    "driver_absolute_range_deg": [-20.0, 20.0],
+    "driver_maximum_single_delta_deg": 10.0,
+    "automatic_search_enabled": false
+  },
   "notes": [
     "The full legacy observation joint pose B/T/R/S/E is commanded; the gripper is intentionally omitted.",
     "Camera frames remain in the original sensor orientation; no software image rotation is applied.",
     "No observation motion may be sent automatically at node startup.",
-    "T=104 Cartesian motion remains disabled until the observation pose test passes."
+    "T=104 Cartesian motion remains disabled until the observation pose test passes.",
+    "Stage 4D begins with one explicitly commanded B-only move on the persistent driver; automatic B search remains disabled until that interface test passes."
   ]
 }

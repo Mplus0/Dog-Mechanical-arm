@@ -727,6 +727,45 @@ motion_commands_enabled=false
 空候选时为 `no_allowed_target`；只有候选 topic 从未送达时才是
 `candidate_message_timeout`。
 
+### Stage 4D-1：常驻驱动 B-only 接口验收
+
+Stage 4C 的正常定位、`target_not_found`、`target_unstable`、相同 task_id 去重和不同 task_id
+并发拒绝均已通过。现场批准 Stage 4D 使用相对周期 B0 的搜索序列
+`[0, -5, +5, -10, +10]°`。
+
+自动搜索尚未启用。先验收常驻驱动上的单条 B 关节命令，避免自动状态机建立在一个未通过的
+驱动接口上。驱动默认仍拒绝所有运动；只有显式设置
+`enable_b_joint_motion:=true` 才接受以下唯一格式：
+
+```json
+{
+  "command_id": "stage4d-b-minus-5",
+  "type": "move_b_joint",
+  "joint": 1,
+  "angle": 0.0,
+  "speed": 10.0,
+  "acceleration": 10.0
+}
+```
+
+`angle` 是绝对角，不是增量；正式测试值必须由该次启动后的最新 B 反馈计算。驱动要求：目标在
+`[-20, +20]°` 内、相对最新反馈的单次变化不超过 `10°`、速度和加速度不超过 `35`，且机械臂
+状态年龄不超过 `0.25 s`。它拒绝其他关节和其他命令类型，每条接受的命令只发送一次，不重试。
+
+停止此前的只读驱动，使用同一端口启动显式 B-only 模式：
+
+```bash
+ros2 run apriltag_block_grasp roarm_driver_node \
+  --ros-args \
+  -p port:=/dev/ttyUSB0 \
+  -p enable_b_joint_motion:=true
+```
+
+启动本身不会发送运动命令。先读取一条状态，确认
+`driver.mode=persistent_b_joint_motion_enabled`、`b_joint_motion_enabled=true`，并记录
+`state.b`；此时不要发布 `/roarm_m3/cmd`。命令发送结果将发布到
+`/roarm_m3/cmd_result`，后续验收需同时检查结果和新的 `state.b`。
+
 ### 单次笛卡尔 XYZ 小步安全工具
 
 `move_cartesian_fixed_orientation_safe` 用一条 RoArm-M3 `T=1041` 命令验证 XYZ 小步运动。

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Persistent read-only RoArm-M3 ROS 2 serial driver.
+"""Persistent RoArm-M3 state driver with an explicitly gated B-only command.
 
 The former gated T=1041 hold diagnostic is retained only for report/history
 compatibility.  Hardware testing proved that copying stable T=1051 Cartesian
@@ -17,6 +17,10 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
+from apriltag_block_grasp.core.b_joint_command import (
+    BJointCommandLimits,
+    validate_b_joint_request,
+)
 from apriltag_block_grasp.core.roarm_serial_control import RoArmCartesianController
 
 
@@ -36,8 +40,16 @@ class RoArmDriverNode(Node):
         self.declare_parameter("serial_settle_time_s", 2.0)
         self.declare_parameter("state_topic", "/roarm_m3/state")
         self.declare_parameter("command_topic", "/roarm_m3/cmd")
+        self.declare_parameter("command_result_topic", "/roarm_m3/cmd_result")
         self.declare_parameter("state_publish_period_s", 0.2)
         self.declare_parameter("state_stale_timeout_s", 1.0)
+        self.declare_parameter("enable_b_joint_motion", False)
+        self.declare_parameter("b_joint_min_deg", -20.0)
+        self.declare_parameter("b_joint_max_deg", 20.0)
+        self.declare_parameter("b_joint_max_delta_deg", 10.0)
+        self.declare_parameter("b_joint_max_speed_deg_s", 35.0)
+        self.declare_parameter("b_joint_max_acceleration", 35.0)
+        self.declare_parameter("b_joint_max_state_age_s", 0.25)
         self.declare_parameter("hold_test_report_topic", "/apriltag_grasp/hold_test_report")
         self.declare_parameter("enable_diagnostic_hold_test", False)
         self.declare_parameter("hold_test_min_uptime_s", 5.0)
@@ -52,6 +64,28 @@ class RoArmDriverNode(Node):
         self.port = str(self.get_parameter("port").value)
         self.state_topic = str(self.get_parameter("state_topic").value)
         self.command_topic = str(self.get_parameter("command_topic").value)
+        self.command_result_topic = str(
+            self.get_parameter("command_result_topic").value
+        )
+        self.enable_b_joint_motion = bool(
+            self.get_parameter("enable_b_joint_motion").value
+        )
+        self.b_joint_limits = BJointCommandLimits(
+            minimum_deg=float(self.get_parameter("b_joint_min_deg").value),
+            maximum_deg=float(self.get_parameter("b_joint_max_deg").value),
+            maximum_delta_deg=float(
+                self.get_parameter("b_joint_max_delta_deg").value
+            ),
+            maximum_speed_deg_s=float(
+                self.get_parameter("b_joint_max_speed_deg_s").value
+            ),
+            maximum_acceleration=float(
+                self.get_parameter("b_joint_max_acceleration").value
+            ),
+        )
+        self.b_joint_max_state_age_s = self._positive_parameter(
+            "b_joint_max_state_age_s"
+        )
         self.hold_test_report_topic = str(
             self.get_parameter("hold_test_report_topic").value
         )
@@ -100,6 +134,9 @@ class RoArmDriverNode(Node):
             timeout_s=serial_timeout_s,
         )
         self.publisher = self.create_publisher(String, self.state_topic, 10)
+        self.command_result_publisher = self.create_publisher(
+            String, self.command_result_topic, 10
+        )
         self.hold_test_report_publisher = self.create_publisher(
             String, self.hold_test_report_topic, 10
         )
@@ -117,6 +154,9 @@ class RoArmDriverNode(Node):
         self._empty_read_count = 0
         self._read_error: Optional[str] = None
         self._rejected_command_count = 0
+        self._accepted_b_joint_command_count = 0
+        self._last_command_result: Optional[Dict[str, Any]] = None
+        self._command_lock = threading.Lock()
         self._serial_open_count = 0
         self._serial_bytes_transmitted = 0
         self._hold_test_attempted = False
@@ -133,11 +173,16 @@ class RoArmDriverNode(Node):
         self.reader.connect(settle_time_s=settle_time_s)
         self._serial_open_count = 1
         self.get_logger().info(
-            "RoArm serial connection is persistent; normal command handling is "
-            "read-only: "
+            "RoArm serial connection is persistent: "
             f"port={self.port}, command_topic={self.command_topic}, "
-            f"state_topic={self.state_topic}."
+            f"state_topic={self.state_topic}, "
+            f"B_joint_motion_enabled={self.enable_b_joint_motion}."
         )
+        if self.enable_b_joint_motion:
+            self.get_logger().warning(
+                "B-JOINT MOTION IS ENABLED: only absolute joint=1 commands within "
+                "the configured range and delta limits are accepted."
+            )
         if self.enable_diagnostic_hold_test:
             self.get_logger().warning(
                 "Single hold-current-pose diagnostic is ARMED. It still requires "
@@ -202,6 +247,9 @@ class RoArmDriverNode(Node):
             self._reject_command(None, "command_must_be_json_object")
             return
         command_type = command.get("type")
+        if command_type == "move_b_joint":
+            self._handle_b_joint_command(command)
+            return
         if command_type != HOLD_TEST_COMMAND_TYPE:
             self._reject_command(command_type, "unsupported_command_type")
             return
@@ -288,6 +336,92 @@ class RoArmDriverNode(Node):
         self._rejected_command_count += 1
         self.get_logger().warning(
             f"Rejected /roarm_m3/cmd: command_type={command_type!r}, reason={reason}."
+        )
+
+    def _publish_command_result(self, payload: Dict[str, Any]) -> None:
+        result = {"stamp": time.time(), **payload}
+        self._last_command_result = result
+        message = String()
+        message.data = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+        self.command_result_publisher.publish(message)
+
+    def _reject_b_joint_command(self, command: Dict[str, Any], reason: str) -> None:
+        self._reject_command(command.get("type"), reason)
+        self._publish_command_result(
+            {
+                "command_id": command.get("command_id"),
+                "type": "move_b_joint",
+                "accepted": False,
+                "reason": reason,
+                "motion_command_sent": False,
+            }
+        )
+
+    def _handle_b_joint_command(self, command: Dict[str, Any]) -> None:
+        if not self.enable_b_joint_motion:
+            self._reject_b_joint_command(command, "b_joint_motion_not_enabled")
+            return
+        now = time.monotonic()
+        with self._state_lock:
+            latest = None if self._latest_state is None else dict(self._latest_state)
+            latest_time = self._latest_state_monotonic
+            read_error = self._read_error
+        if read_error is not None:
+            self._reject_b_joint_command(command, "serial_read_error")
+            return
+        if latest is None or latest_time is None:
+            self._reject_b_joint_command(command, "arm_state_unavailable")
+            return
+        state_age_s = max(0.0, now - latest_time)
+        if state_age_s > self.b_joint_max_state_age_s:
+            self._reject_b_joint_command(command, "arm_state_stale")
+            return
+        try:
+            current_b_deg = math.degrees(self._finite_state_value(latest, "b"))
+            validated = validate_b_joint_request(
+                command, current_b_deg, self.b_joint_limits
+            )
+        except Exception as exc:
+            self._reject_b_joint_command(
+                command, f"validation_failed:{type(exc).__name__}:{exc}"
+            )
+            return
+
+        try:
+            with self._command_lock:
+                sent = self.reader.send_b_joint_command(
+                    validated["target_b_deg"],
+                    validated["speed_deg_s"],
+                    validated["acceleration"],
+                )
+        except Exception as exc:
+            self._serial_bytes_transmitted = self.reader.transmitted_byte_count
+            self._publish_command_result(
+                {
+                    "command_id": command.get("command_id"),
+                    "type": "move_b_joint",
+                    "accepted": False,
+                    "reason": f"serial_send_failed:{type(exc).__name__}:{exc}",
+                    "motion_command_sent": self._serial_bytes_transmitted > 0,
+                }
+            )
+            return
+
+        self._accepted_b_joint_command_count += 1
+        self._serial_bytes_transmitted = self.reader.transmitted_byte_count
+        self._publish_command_result(
+            {
+                "command_id": command.get("command_id"),
+                "type": "move_b_joint",
+                "accepted": True,
+                "reason": "command_sent",
+                "motion_command_sent": True,
+                "state_age_s_at_send": state_age_s,
+                "current_b_deg_at_send": validated["current_b_deg"],
+                "target_b_deg": validated["target_b_deg"],
+                "requested_delta_deg": validated["requested_delta_deg"],
+                "sent_command": sent,
+            }
         )
 
     @staticmethod
@@ -514,8 +648,16 @@ class RoArmDriverNode(Node):
             "state_age_s": age_s,
             "state": self._normalize_state(latest_state),
             "driver": {
-                "mode": "persistent_read_only_validation",
-                "motion_commands_enabled": False,
+                "mode": (
+                    "persistent_b_joint_motion_enabled"
+                    if self.enable_b_joint_motion
+                    else "persistent_read_only_validation"
+                ),
+                "motion_commands_enabled": self.enable_b_joint_motion,
+                "b_joint_motion_enabled": self.enable_b_joint_motion,
+                "other_joint_motion_enabled": False,
+                "accepted_b_joint_command_count": self._accepted_b_joint_command_count,
+                "last_command_result": self._last_command_result,
                 "diagnostic_hold_test_enabled": self.enable_diagnostic_hold_test,
                 "diagnostic_hold_test_attempted": self._hold_test_attempted,
                 "diagnostic_hold_test_command_sent": self._hold_test_command_sent,
