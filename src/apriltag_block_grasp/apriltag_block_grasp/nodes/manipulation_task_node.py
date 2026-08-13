@@ -13,6 +13,7 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 from apriltag_block_grasp.core.b_search import load_b_search_config
+from apriltag_block_grasp.core.grasp_plan import load_pre_grasp_plan_config
 from apriltag_block_grasp.core.localization_task import LocalizationTaskSession
 from apriltag_block_grasp.core.target_lock import (
     StableTargetLock,
@@ -42,6 +43,10 @@ class ManipulationTaskNode(Node):
         )
         self.declare_parameter(
             "motion_config_path", str(share / "config" / "motion_control.json")
+        )
+        self.declare_parameter(
+            "grasp_calibration_path",
+            str(share / "config" / "grasp_calibration.json"),
         )
         self.declare_parameter("timeout_check_period_s", 0.05)
 
@@ -99,6 +104,9 @@ class ManipulationTaskNode(Node):
         self.b_search_config = load_b_search_config(
             str(self.get_parameter("motion_config_path").value)
         )
+        self.pre_grasp_plan_config = load_pre_grasp_plan_config(
+            str(self.get_parameter("grasp_calibration_path").value)
+        )
         self.session = LocalizationTaskSession(StableTargetLock(config))
         self.state_publisher = self.create_publisher(String, self.task_state_topic, 10)
         self.result_publisher = self.create_publisher(String, self.task_result_topic, 10)
@@ -149,7 +157,8 @@ class ManipulationTaskNode(Node):
             f"B_search_motion_enabled={self.enable_b_search_motion}; "
             f"observation_motion_enabled={self.enable_observation_motion}; "
             f"gripper_open_motion_enabled={self.enable_gripper_open_motion}; "
-            "pre-grasp, descent, close and lift motions remain disabled."
+            "pre-grasp coordinates are planning-only; Cartesian, descent, close "
+            "and lift motions remain disabled."
         )
 
     @staticmethod
@@ -687,11 +696,23 @@ class ManipulationTaskNode(Node):
             self.frozen_target_snapshot
         )
         snapshot["gripper_driver_result"] = result
-        self.publish_state("gripper_open_ready", "gripper_open_complete", snapshot)
+        try:
+            snapshot["pre_grasp_plan"] = self.pre_grasp_plan_config.build(
+                snapshot["base_object_median_mm"]
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            self.fail_gripper_open(
+                "pre_grasp_plan_invalid",
+                {"planning_error": f"{type(exc).__name__}:{exc}"},
+            )
+            return
+        self.publish_state(
+            "pre_grasp_plan_ready", "planning_only_no_cartesian_motion", snapshot
+        )
         self.publish_result(
             self.session.active_task_id,
-            "gripper_open_ready",
-            "gripper_open_complete",
+            "pre_grasp_plan_ready",
+            "planning_only_no_cartesian_motion",
             snapshot,
         )
         self.session.finish_terminal()
