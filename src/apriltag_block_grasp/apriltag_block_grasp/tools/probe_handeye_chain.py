@@ -53,6 +53,14 @@ def parse_arguments():
     parser.add_argument("--state-timeout-s", type=float, default=0.5)
     parser.add_argument("--frame-timeout-ms", type=int, default=500)
     parser.add_argument("--tag-size-mm", type=float, default=38.9)
+    parser.add_argument(
+        "--wait-for-ready",
+        action="store_true",
+        help=(
+            "open the arm serial port first, then wait for Enter before opening "
+            "the camera and collecting samples"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -75,6 +83,7 @@ def main() -> int:
         "legacy_base_z_plus_100_applied": False,
         "depth_enabled": False,
         "serial_bytes_transmitted": 0,
+        "serial_open_can_reset_controller": True,
         "motion_commands_enabled": False,
         "samples": [],
         "summary": {"valid": False},
@@ -105,6 +114,16 @@ def main() -> int:
         }
 
         arm.connect()
+        if args.wait_for_ready:
+            print(
+                "\nArm serial is now open. RoArm-M3 may have reset during open().\n"
+                "Adjust the arm to the observation pose now and place the fixed "
+                "Tag/block pair.\n"
+                "Stop any other program using the Orbbec camera, then press Enter "
+                "to start read-only sampling.\n",
+                flush=True,
+            )
+            input()
         camera.start()
         calibration = read_orbbec_color_calibration(camera)
         detector = OpenCvAprilTag25h9Detector(allowed_ids=(0, 1))

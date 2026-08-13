@@ -342,8 +342,18 @@ source install/setup.bash
 
 ros2 run apriltag_block_grasp probe_handeye_chain \
   --port /dev/ttyUSB0 \
-  --sample-count 20
+  --sample-count 20 \
+  --wait-for-ready
 ```
+
+RoArm-M3 的 ESP32 USB 串口在打开时可能通过 DTR/RTS 自动下载电路触发控制板复位；
+其直接表现是 OLED 刷新，随后固件执行上电初始回位。这不是探针发送了运动 JSON，
+但仍属于打开串口造成的硬件副作用。指定 `--wait-for-ready` 后，探针先打开且持续占用
+串口，等待回位结束并提示按 Enter。此时再调整到观察姿态、固定标签和物块，最后按
+Enter；后续采样不会重新打开串口。
+
+等待期间可以使用不占机械臂串口的控制方式调整姿态。按 Enter 前必须停止其他占用
+Orbbec 相机的程序。不要同时启动另一个访问 `/dev/ttyUSB0` 的进程。
 
 该探针使用新包内部独立安装的 `config/handeye_cam_to_eef.json` 和
 `config/tag_to_object.json`，计算：
@@ -362,7 +372,7 @@ rotation_rpy_deg = [180.0, 0.0, -90.0]
 
 探针同时输出标签中心 `base_tag_mm` 和物块几何中心 `base_object_mm`。它不应用
 `base_position_correction_mm` 或旧包的 `base Z + 100 mm`。RGBD 深度关闭，机械臂
-串口仍为只读且不发送命令。
+串口数据方向仍为只读且不发送命令；但如上所述，首次打开串口可能复位控制板。
 
 请先反馈 `summary`、`failure_counts`、`per_id_stability` 和最后一条 `samples`。首轮只
 判断静止状态下坐标链是否有限、矩阵方向是否合理，以及 `base_tag_mm`、

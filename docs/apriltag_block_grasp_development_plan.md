@@ -617,6 +617,11 @@ Codex：
 
 ### 阶段 3：手眼变换与 `tag_to_object` 标定
 
+RoArm-M3 的 ESP32 USB 串口在 `open()` 时可能因 DTR/RTS 自动下载电路发生复位，
+表现为 OLED 刷新和固件执行初始回位。`serial_bytes_transmitted=0` 只能证明程序未发送
+串口命令，不能证明打开串口对硬件无副作用。标定探针应先建立并持续保持串口连接，
+等待人工重新调整观察姿态后再开始采样；同一轮不得关闭后重新打开串口。
+
 Codex：
 
 - 集成现有 `T_eef_camera`；

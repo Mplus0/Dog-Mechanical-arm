@@ -8,8 +8,10 @@ from typing import Any, Dict, Optional
 class RoArmSerialStateReader:
     """Open one serial port and accept only unsolicited T=1051 state frames.
 
-    This class intentionally has no write or command method. Opening the port
-    toggles neither RTS nor DTR and no bytes are transmitted by this wrapper.
+    This class intentionally has no write or command method and transmits no
+    bytes. On RoArm-M3 hardware, opening its ESP32 USB serial device may still
+    pulse DTR/RTS in the USB/TTY stack and reset the controller. Callers must
+    therefore treat connect() as hardware-affecting even though it is read-only.
     """
 
     def __init__(
@@ -36,8 +38,9 @@ class RoArmSerialStateReader:
             raise RuntimeError(
                 "pyserial is unavailable; install the ROS dependency python3-serial"
             ) from exc
-        # Configure line state before opening the device. This avoids relying
-        # on pyserial's platform defaults during the initial open operation.
+        # Configure the requested steady line state before opening. Some USB
+        # serial drivers can still produce a short DTR/RTS transition in open(),
+        # so this cannot guarantee that an ESP32 auto-reset circuit will not fire.
         serial_port = serial.Serial(
             port=None,
             baudrate=self.baudrate,
