@@ -14,6 +14,12 @@
     "source": "red_block_grasp_ros2 pre_grasp_z_offset_mm",
     "motion_enabled": true
   },
+  "approach": {
+    "z_offset_from_final_mm": 80.0,
+    "status": "confirmed_for_stage_5_4_planning_only",
+    "source": "User-confirmed field value on 2026-08-14",
+    "motion_enabled": false
+  },
   "grasp_tool_orientation_rpy_rad": [0.012271846, 1.71345654, -0.062893212],
   "grasp_tool_orientation_order": "Rz(yaw) @ Ry(pitch) @ Rx(roll)",
   "reference_joint_state_rad": {
@@ -35,6 +41,7 @@
     "The TCP offset includes asymmetric gripper geometry and any systematic localization error present in this one reference measurement.",
     "Do not copy this offset into base_position_correction_mm.",
     "The 120 mm pre-grasp Z offset is a legacy-package candidate, not an approved motion parameter.",
+    "The 80 mm approach Z offset is approved for planning output only; approach motion remains disabled.",
     "Validate at multiple block positions before enabling automatic descent or gripper closure."
   ]
 }
