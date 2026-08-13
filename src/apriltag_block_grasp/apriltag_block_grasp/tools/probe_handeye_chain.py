@@ -84,6 +84,7 @@ def main() -> int:
         "depth_enabled": False,
         "serial_bytes_transmitted": 0,
         "serial_open_can_reset_controller": True,
+        "serial_input_buffer_cleared_after_ready": False,
         "motion_commands_enabled": False,
         "samples": [],
         "summary": {"valid": False},
@@ -124,6 +125,11 @@ def main() -> int:
                 flush=True,
             )
             input()
+            # State frames continue arriving while the operator adjusts the arm.
+            # They describe old poses and must never be paired with camera frames
+            # captured after Enter is pressed.
+            arm.reset_input_buffer()
+            report["serial_input_buffer_cleared_after_ready"] = True
         camera.start()
         calibration = read_orbbec_color_calibration(camera)
         detector = OpenCvAprilTag25h9Detector(allowed_ids=(0, 1))

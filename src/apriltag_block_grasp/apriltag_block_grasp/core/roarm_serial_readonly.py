@@ -65,6 +65,13 @@ class RoArmSerialStateReader:
         if serial_port is not None:
             serial_port.close()
 
+    def reset_input_buffer(self) -> None:
+        """Discard queued state frames so the next read reflects current hardware."""
+
+        if self.serial_port is None:
+            raise RuntimeError("RoArm serial reader is not connected")
+        self.serial_port.reset_input_buffer()
+
     def read_state(self, timeout_s: float = 1.0) -> Optional[Dict[str, Any]]:
         if self.serial_port is None:
             raise RuntimeError("RoArm serial reader is not connected")
