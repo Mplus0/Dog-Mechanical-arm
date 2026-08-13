@@ -33,6 +33,7 @@ setup(
             "probe_arm_pose = apriltag_block_grasp.tools.probe_arm_pose:main",
             "probe_arm_serial_state = apriltag_block_grasp.tools.probe_arm_serial_state:main",
             "probe_handeye_chain = apriltag_block_grasp.tools.probe_handeye_chain:main",
+            "move_b_joint_safe = apriltag_block_grasp.tools.move_b_joint_safe:main",
         ],
     },
 )

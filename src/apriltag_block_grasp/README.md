@@ -358,3 +358,30 @@ T_base_tag = T_base_eef @ T_eef_camera @ T_camera_tag
 请先反馈 `summary`、`failure_counts`、`per_id_stability` 和最后一条 `samples`。首轮只
 判断静止状态下坐标链是否有限、矩阵方向是否合理以及 `base_tag_mm` 的波动；不把该坐标
 用于机械臂动作。
+
+### 受限 B 关节观察角移动工具
+
+手眼链跨位姿验证仅使用 B 关节小角度运动。工具只允许发送一条绝对 B 关节命令，默认
+范围为 `[-20°, +20°]`、单次最大变化 `10°`。不指定 `--enable-motion` 时只做演练，
+不会发送命令。
+
+先在机械臂周围清空人员和物品，执行演练：
+
+```bash
+ros2 run apriltag_block_grasp move_b_joint_safe \
+  --port /dev/ttyUSB0 \
+  --target-b-deg 5.0
+```
+
+确认输出中的当前角度、目标角度、变化量和 `planned_command` 正确后，才能显式启用运动：
+
+```bash
+ros2 run apriltag_block_grasp move_b_joint_safe \
+  --port /dev/ttyUSB0 \
+  --target-b-deg 5.0 \
+  --enable-motion
+```
+
+默认命令为 `T=121, joint=1, spd=10, acc=10`。工具发送一条命令后只读取 `T=1051`
+反馈，连续 3 帧进入 `±1°` 才报告到位；超时不会自动发送第二条命令或回退。相机、
+夹爪、其他关节和补光灯均不受控制。
