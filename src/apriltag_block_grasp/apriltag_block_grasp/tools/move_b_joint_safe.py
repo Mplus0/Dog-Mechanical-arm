@@ -79,6 +79,8 @@ def parse_arguments():
     parser.add_argument("--tolerance-deg", type=float, default=1.0)
     parser.add_argument("--required-stable-samples", type=int, default=3)
     parser.add_argument("--motion-timeout-s", type=float, default=8.0)
+    parser.add_argument("--initial-state-attempts", type=int, default=5)
+    parser.add_argument("--initial-state-timeout-s", type=float, default=1.0)
     parser.add_argument(
         "--enable-motion",
         action="store_true",
@@ -108,14 +110,33 @@ def main() -> int:
         acceleration = finite_float(args.acceleration, "acceleration")
         tolerance_deg = finite_float(args.tolerance_deg, "tolerance_deg")
         motion_timeout_s = finite_float(args.motion_timeout_s, "motion_timeout_s")
+        initial_state_timeout_s = finite_float(
+            args.initial_state_timeout_s, "initial_state_timeout_s"
+        )
+        initial_state_attempts = max(1, int(args.initial_state_attempts))
         required_stable_samples = max(1, int(args.required_stable_samples))
-        if tolerance_deg <= 0.0 or motion_timeout_s <= 0.0:
-            raise ValueError("tolerance_deg and motion_timeout_s must be positive")
+        if (
+            tolerance_deg <= 0.0
+            or motion_timeout_s <= 0.0
+            or initial_state_timeout_s <= 0.0
+        ):
+            raise ValueError(
+                "tolerance_deg, motion_timeout_s and initial_state_timeout_s must be positive"
+            )
 
         controller.connect()
-        initial_state = controller.read_state(timeout_s=2.0)
+        initial_state = None
+        initial_empty_reads = 0
+        for _ in range(initial_state_attempts):
+            initial_state = controller.read_state(timeout_s=initial_state_timeout_s)
+            if initial_state is not None:
+                break
+            initial_empty_reads += 1
         if initial_state is None:
-            raise RuntimeError("no initial T=1051 arm state received")
+            raise RuntimeError(
+                "no initial T=1051 arm state received after "
+                f"{initial_state_attempts} attempts"
+            )
         current_b_deg = b_degrees_from_state(initial_state)
         delta_deg = validate_motion_request(
             current_b_deg=current_b_deg,
@@ -130,6 +151,8 @@ def main() -> int:
         report.update(
             {
                 "initial_state": compact_state(initial_state),
+                "initial_state_attempt_count": initial_empty_reads + 1,
+                "initial_empty_read_count": initial_empty_reads,
                 "initial_b_deg": current_b_deg,
                 "target_b_deg": target_b_deg,
                 "requested_delta_deg": delta_deg,
