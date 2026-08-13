@@ -33,6 +33,10 @@ from apriltag_block_grasp.core.gripper_motion import (
     load_gripper_open_config,
     validate_open_gripper_request,
 )
+from apriltag_block_grasp.core.pre_grasp_motion import (
+    PRE_GRASP_SEGMENT_COMMAND_TYPE,
+    load_pre_grasp_motion_config,
+)
 from apriltag_block_grasp.core.roarm_serial_control import RoArmCartesianController
 
 
@@ -58,11 +62,17 @@ class RoArmDriverNode(Node):
         self.declare_parameter("enable_b_joint_motion", False)
         self.declare_parameter("enable_observation_motion", False)
         self.declare_parameter("enable_gripper_open_motion", False)
+        self.declare_parameter("enable_pre_grasp_motion", False)
         self.declare_parameter("gripper_open_max_state_age_s", 0.25)
+        self.declare_parameter("pre_grasp_max_state_age_s", 0.25)
         self.declare_parameter("observation_max_state_age_s", 0.25)
         share = Path(get_package_share_directory("apriltag_block_grasp"))
         self.declare_parameter(
             "motion_config_path", str(share / "config" / "motion_control.json")
+        )
+        self.declare_parameter(
+            "grasp_calibration_path",
+            str(share / "config" / "grasp_calibration.json"),
         )
         self.declare_parameter("b_joint_min_deg", -20.0)
         self.declare_parameter("b_joint_max_deg", 20.0)
@@ -102,8 +112,18 @@ class RoArmDriverNode(Node):
         self.enable_gripper_open_motion = bool(
             self.get_parameter("enable_gripper_open_motion").value
         )
+        self.enable_pre_grasp_motion = bool(
+            self.get_parameter("enable_pre_grasp_motion").value
+        )
+        self.pre_grasp_motion_config = load_pre_grasp_motion_config(
+            str(self.get_parameter("motion_config_path").value),
+            str(self.get_parameter("grasp_calibration_path").value),
+        )
         self.gripper_open_max_state_age_s = self._positive_parameter(
             "gripper_open_max_state_age_s"
+        )
+        self.pre_grasp_max_state_age_s = self._positive_parameter(
+            "pre_grasp_max_state_age_s"
         )
         self.observation_max_state_age_s = self._positive_parameter(
             "observation_max_state_age_s"
@@ -195,6 +215,7 @@ class RoArmDriverNode(Node):
         self._accepted_b_joint_command_count = 0
         self._accepted_observation_command_count = 0
         self._accepted_gripper_open_command_count = 0
+        self._accepted_pre_grasp_segment_command_count = 0
         self._last_command_result: Optional[Dict[str, Any]] = None
         self._command_lock = threading.Lock()
         self._serial_open_count = 0
@@ -232,6 +253,11 @@ class RoArmDriverNode(Node):
             self.get_logger().warning(
                 "GRIPPER-OPEN MOTION IS ENABLED: only the configured single "
                 "joint-6 open action is accepted; gripper close is unsupported."
+            )
+        if self.enable_pre_grasp_motion:
+            self.get_logger().warning(
+                "PRE-GRASP CARTESIAN MOTION IS ENABLED: only bounded T=104 "
+                "pre-grasp segments are accepted; approach/descent are unsupported."
             )
         if self.enable_diagnostic_hold_test:
             self.get_logger().warning(
@@ -299,6 +325,9 @@ class RoArmDriverNode(Node):
         command_type = command.get("type")
         if command_type == OPEN_GRIPPER_COMMAND_TYPE:
             self._handle_open_gripper_command(command)
+            return
+        if command_type == PRE_GRASP_SEGMENT_COMMAND_TYPE:
+            self._handle_pre_grasp_segment_command(command)
             return
         if command_type == OBSERVATION_COMMAND_TYPE:
             self._handle_observation_command(command)
@@ -591,6 +620,79 @@ class RoArmDriverNode(Node):
                 "completion_mode": "timed",
                 "timed_wait_s": self.gripper_open_config.timed_wait_s,
                 "state_age_s_at_send": state_age_s,
+                "sent_command": sent_command,
+            }
+        )
+
+    def _reject_pre_grasp_segment_command(
+        self, command: Dict[str, Any], reason: str
+    ) -> None:
+        self._reject_command(command.get("type"), reason)
+        self._publish_command_result(
+            {
+                "command_id": command.get("command_id"),
+                "type": PRE_GRASP_SEGMENT_COMMAND_TYPE,
+                "accepted": False,
+                "reason": reason,
+                "motion_command_sent": False,
+                "cartesian_command_type": 104,
+            }
+        )
+
+    def _handle_pre_grasp_segment_command(self, command: Dict[str, Any]) -> None:
+        if not self.enable_pre_grasp_motion:
+            self._reject_pre_grasp_segment_command(
+                command, "pre_grasp_motion_not_enabled"
+            )
+            return
+        now = time.monotonic()
+        with self._state_lock:
+            latest = None if self._latest_state is None else dict(self._latest_state)
+            latest_time = self._latest_state_monotonic
+            read_error = self._read_error
+        if read_error is not None:
+            self._reject_pre_grasp_segment_command(command, "serial_read_error")
+            return
+        if latest is None or latest_time is None:
+            self._reject_pre_grasp_segment_command(command, "arm_state_unavailable")
+            return
+        state_age_s = max(0.0, now - latest_time)
+        if state_age_s > self.pre_grasp_max_state_age_s:
+            self._reject_pre_grasp_segment_command(command, "arm_state_stale")
+            return
+        try:
+            validated = self.pre_grasp_motion_config.validate_request(command, latest)
+            item = validated["serial_command"]
+            with self._command_lock:
+                sent_command = self.reader.send_legacy_cartesian_command(
+                    x_mm=item["x"],
+                    y_mm=item["y"],
+                    z_mm=item["z"],
+                    pitch_rad=item["t"],
+                    roll_rad=item["r"],
+                    gripper_rad=item["g"],
+                    speed=item["spd"],
+                )
+        except Exception as exc:
+            self._serial_bytes_transmitted = self.reader.transmitted_byte_count
+            self._reject_pre_grasp_segment_command(
+                command, f"validation_or_send_failed:{type(exc).__name__}:{exc}"
+            )
+            return
+        self._accepted_pre_grasp_segment_command_count += 1
+        self._serial_bytes_transmitted = self.reader.transmitted_byte_count
+        self._publish_command_result(
+            {
+                "command_id": validated["command_id"],
+                "type": PRE_GRASP_SEGMENT_COMMAND_TYPE,
+                "accepted": True,
+                "reason": "command_sent",
+                "motion_command_sent": True,
+                "cartesian_command_type": 104,
+                "state_age_s_at_send": state_age_s,
+                "current_xyz_mm": validated["current_xyz_mm"],
+                "target_xyz_mm": validated["target_xyz_mm"],
+                "segment_distance_mm": validated["segment_distance_mm"],
                 "sent_command": sent_command,
             }
         )
@@ -903,17 +1005,25 @@ class RoArmDriverNode(Node):
                     self.enable_b_joint_motion
                     or self.enable_observation_motion
                     or self.enable_gripper_open_motion
+                    or self.enable_pre_grasp_motion
                 ),
                 "b_joint_motion_enabled": self.enable_b_joint_motion,
                 "observation_motion_enabled": self.enable_observation_motion,
                 "gripper_open_motion_enabled": self.enable_gripper_open_motion,
-                "other_joint_motion_enabled": self.enable_observation_motion,
+                "pre_grasp_motion_enabled": self.enable_pre_grasp_motion,
+                "cartesian_motion_enabled": self.enable_pre_grasp_motion,
+                "other_joint_motion_enabled": (
+                    self.enable_observation_motion or self.enable_pre_grasp_motion
+                ),
                 "accepted_b_joint_command_count": self._accepted_b_joint_command_count,
                 "accepted_observation_command_count": (
                     self._accepted_observation_command_count
                 ),
                 "accepted_gripper_open_command_count": (
                     self._accepted_gripper_open_command_count
+                ),
+                "accepted_pre_grasp_segment_command_count": (
+                    self._accepted_pre_grasp_segment_command_count
                 ),
                 "last_command_result": self._last_command_result,
                 "diagnostic_hold_test_enabled": self.enable_diagnostic_hold_test,

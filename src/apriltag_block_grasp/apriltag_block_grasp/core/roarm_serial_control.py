@@ -149,3 +149,36 @@ class RoArmCartesianController(RoArmJointController):
         )
         self._send_encoded_command(command)
         return command
+
+    @staticmethod
+    def build_legacy_cartesian_command(
+        x_mm: float,
+        y_mm: float,
+        z_mm: float,
+        pitch_rad: float,
+        roll_rad: float,
+        gripper_rad: float,
+        speed: float,
+    ) -> Dict[str, Any]:
+        values = (x_mm, y_mm, z_mm, pitch_rad, roll_rad, gripper_rad, speed)
+        if not all(math.isfinite(float(value)) for value in values):
+            raise ValueError("legacy Cartesian command values must be finite")
+        if float(speed) <= 0.0:
+            raise ValueError("legacy Cartesian speed must be positive")
+        return {
+            "T": 104,
+            "x": float(x_mm),
+            "y": float(y_mm),
+            "z": float(z_mm),
+            "t": float(pitch_rad),
+            "r": float(roll_rad),
+            "g": float(gripper_rad),
+            "spd": float(speed),
+        }
+
+    def send_legacy_cartesian_command(self, **kwargs: float) -> Dict[str, Any]:
+        if self.serial_port is None:
+            raise RuntimeError("RoArm Cartesian controller is not connected")
+        command = self.build_legacy_cartesian_command(**kwargs)
+        self._send_encoded_command(command)
+        return command

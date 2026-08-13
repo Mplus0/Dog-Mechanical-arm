@@ -5,7 +5,7 @@ import json
 import math
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import rclpy
 from ament_index_python.packages import get_package_share_directory
@@ -15,6 +15,10 @@ from std_msgs.msg import String
 from apriltag_block_grasp.core.b_search import load_b_search_config
 from apriltag_block_grasp.core.grasp_plan import load_pre_grasp_plan_config
 from apriltag_block_grasp.core.localization_task import LocalizationTaskSession
+from apriltag_block_grasp.core.pre_grasp_motion import (
+    PRE_GRASP_SEGMENT_COMMAND_TYPE,
+    load_pre_grasp_motion_config,
+)
 from apriltag_block_grasp.core.target_lock import (
     StableTargetLock,
     load_target_stability_config,
@@ -35,9 +39,11 @@ class ManipulationTaskNode(Node):
         self.declare_parameter("enable_b_search_motion", False)
         self.declare_parameter("enable_observation_motion", False)
         self.declare_parameter("enable_gripper_open_motion", False)
+        self.declare_parameter("enable_pre_grasp_motion", False)
         self.declare_parameter("observation_result_timeout_s", 5.0)
         self.declare_parameter("observation_state_timeout_s", 2.0)
         self.declare_parameter("gripper_open_result_timeout_s", 2.5)
+        self.declare_parameter("pre_grasp_state_timeout_s", 2.0)
         self.declare_parameter(
             "stability_config_path", str(share / "config" / "target_stability.json")
         )
@@ -68,6 +74,9 @@ class ManipulationTaskNode(Node):
         self.enable_gripper_open_motion = bool(
             self.get_parameter("enable_gripper_open_motion").value
         )
+        self.enable_pre_grasp_motion = bool(
+            self.get_parameter("enable_pre_grasp_motion").value
+        )
         self.observation_result_timeout_s = float(
             self.get_parameter("observation_result_timeout_s").value
         )
@@ -92,6 +101,14 @@ class ManipulationTaskNode(Node):
             or self.gripper_open_result_timeout_s <= 0.0
         ):
             raise ValueError("gripper_open_result_timeout_s must be positive")
+        self.pre_grasp_state_timeout_s = float(
+            self.get_parameter("pre_grasp_state_timeout_s").value
+        )
+        if (
+            not math.isfinite(self.pre_grasp_state_timeout_s)
+            or self.pre_grasp_state_timeout_s <= 0.0
+        ):
+            raise ValueError("pre_grasp_state_timeout_s must be positive")
         timeout_check_period_s = float(
             self.get_parameter("timeout_check_period_s").value
         )
@@ -106,6 +123,10 @@ class ManipulationTaskNode(Node):
         )
         self.pre_grasp_plan_config = load_pre_grasp_plan_config(
             str(self.get_parameter("grasp_calibration_path").value)
+        )
+        self.pre_grasp_motion_config = load_pre_grasp_motion_config(
+            str(self.get_parameter("motion_config_path").value),
+            str(self.get_parameter("grasp_calibration_path").value),
         )
         self.session = LocalizationTaskSession(StableTargetLock(config))
         self.state_publisher = self.create_publisher(String, self.task_state_topic, 10)
@@ -148,6 +169,16 @@ class ManipulationTaskNode(Node):
         self.pending_gripper_open_sent_monotonic: Optional[float] = None
         self.frozen_target_snapshot: Optional[Dict[str, Any]] = None
         self.gripper_open_completed = False
+        self.pre_grasp_motion_completed = False
+        self.pre_grasp_motion_started = False
+        self.pre_grasp_plan: Optional[Dict[str, Any]] = None
+        self.pre_grasp_segments: List[Dict[str, float]] = []
+        self.pre_grasp_segment_index = 0
+        self.pending_pre_grasp_command_id: Optional[str] = None
+        self.pending_pre_grasp_sent_monotonic: Optional[float] = None
+        self.pending_pre_grasp_command_accepted = False
+        self.pre_grasp_arrival_stable_count = 0
+        self.pending_pre_grasp_state_since_monotonic: Optional[float] = None
         self.timeout_timer = self.create_timer(
             timeout_check_period_s, self.on_timeout_check
         )
@@ -157,7 +188,8 @@ class ManipulationTaskNode(Node):
             f"B_search_motion_enabled={self.enable_b_search_motion}; "
             f"observation_motion_enabled={self.enable_observation_motion}; "
             f"gripper_open_motion_enabled={self.enable_gripper_open_motion}; "
-            "pre-grasp coordinates are planning-only; Cartesian, descent, close "
+            f"pre_grasp_motion_enabled={self.enable_pre_grasp_motion}; "
+            "approach, descent, close "
             "and lift motions remain disabled."
         )
 
@@ -174,15 +206,19 @@ class ManipulationTaskNode(Node):
             "placed_ids": [],
             "carrying_id": None,
             "target_snapshot_only": not self.enable_gripper_open_motion,
-            "pick_motion_executed": False,
+            "pick_motion_executed": self.pre_grasp_motion_started,
             "observation_motion_enabled": self.enable_observation_motion,
             "observation_motion_completed": self.observation_motion_completed,
             "b_search_enabled": self.enable_b_search_motion,
             "gripper_commands_enabled": self.enable_gripper_open_motion,
             "gripper_open_completed": self.gripper_open_completed,
+            "pre_grasp_motion_enabled": self.enable_pre_grasp_motion,
+            "pre_grasp_motion_started": self.pre_grasp_motion_started,
+            "pre_grasp_motion_completed": self.pre_grasp_motion_completed,
             "motion_commands_enabled": (
                 self.enable_b_search_motion or self.enable_observation_motion
                 or self.enable_gripper_open_motion
+                or self.enable_pre_grasp_motion
             ),
             "motion_scope": "+".join(
                 scope
@@ -190,6 +226,7 @@ class ManipulationTaskNode(Node):
                     (self.enable_observation_motion, "fixed_observation"),
                     (self.enable_b_search_motion, "B_joint_search"),
                     (self.enable_gripper_open_motion, "gripper_open"),
+                    (self.enable_pre_grasp_motion, "pre_grasp_T104"),
                 )
                 if enabled
             )
@@ -258,6 +295,10 @@ class ManipulationTaskNode(Node):
         decision = self.session.accept_command(data, time.monotonic())
         if decision.action == "accepted":
             self.gripper_open_completed = False
+            self.pre_grasp_motion_completed = False
+            self.pre_grasp_motion_started = False
+            self.pre_grasp_plan = None
+            self.pre_grasp_segments = []
             self.frozen_target_snapshot = None
             if self.enable_observation_motion:
                 self.observation_motion_completed = False
@@ -310,6 +351,12 @@ class ManipulationTaskNode(Node):
             return
         if self.session.state == "waiting_gripper_open":
             self.check_gripper_open_timeout()
+            return
+        if self.session.state == "waiting_pre_grasp_motion":
+            self.check_pre_grasp_motion_timeout()
+            return
+        if self.session.state == "waiting_pre_grasp_state":
+            self.check_pre_grasp_state_timeout()
             return
         if self.session.active and self.session.state == "waiting_b_motion":
             self.check_b_motion_timeout()
@@ -392,8 +439,15 @@ class ManipulationTaskNode(Node):
         if self.session.active and self.session.state == "waiting_observation_state":
             self.try_start_localization_after_observation()
             return
+        if self.session.active and self.session.state == "waiting_pre_grasp_state":
+            self.pending_pre_grasp_state_since_monotonic = None
+            self.start_pre_grasp_motion()
+            return
         if self.session.active and self.session.state == "waiting_b_motion":
             self.update_b_arrival(payload)
+            return
+        if self.session.active and self.session.state == "waiting_pre_grasp_motion":
+            self.update_pre_grasp_arrival(payload)
 
     def latest_b_deg_for_preflight(self) -> Optional[float]:
         payload = self.latest_arm_state_payload
@@ -569,6 +623,12 @@ class ManipulationTaskNode(Node):
         ):
             self.handle_gripper_open_result(result)
             return
+        if (
+            self.pending_pre_grasp_command_id is not None
+            and result.get("command_id") == self.pending_pre_grasp_command_id
+        ):
+            self.handle_pre_grasp_command_result(result)
+            return
         if self.pending_b_command_id is None:
             return
         if result.get("command_id") != self.pending_b_command_id:
@@ -697,13 +757,25 @@ class ManipulationTaskNode(Node):
         )
         snapshot["gripper_driver_result"] = result
         try:
-            snapshot["pre_grasp_plan"] = self.pre_grasp_plan_config.build(
+            self.pre_grasp_plan = self.pre_grasp_plan_config.build(
                 snapshot["base_object_median_mm"]
             )
         except (KeyError, TypeError, ValueError) as exc:
             self.fail_gripper_open(
                 "pre_grasp_plan_invalid",
                 {"planning_error": f"{type(exc).__name__}:{exc}"},
+            )
+            return
+        snapshot["pre_grasp_plan"] = self.pre_grasp_plan
+        if self.enable_pre_grasp_motion:
+            self.frozen_target_snapshot = snapshot
+            self.pending_pre_grasp_state_since_monotonic = time.monotonic()
+            self.session.state = "waiting_pre_grasp_state"
+            self.session.last_reason = "waiting_fresh_state_after_gripper_open"
+            self.publish_state(
+                "waiting_pre_grasp_state",
+                "waiting_fresh_state_after_gripper_open",
+                snapshot,
             )
             return
         self.publish_state(
@@ -714,6 +786,185 @@ class ManipulationTaskNode(Node):
             "pre_grasp_plan_ready",
             "planning_only_no_cartesian_motion",
             snapshot,
+        )
+        self.session.finish_terminal()
+
+    def fresh_arm_xyz_for_pre_grasp(self) -> Optional[tuple]:
+        payload = self.latest_arm_state_payload
+        received = self.latest_arm_state_received_monotonic
+        if payload is None or received is None or time.monotonic() - received > 0.5:
+            return None
+        if not bool(payload.get("state_valid", False)):
+            return None
+        driver = payload.get("driver")
+        state = payload.get("state")
+        if not isinstance(driver, dict) or not isinstance(state, dict):
+            return None
+        if not bool(driver.get("pre_grasp_motion_enabled", False)):
+            return None
+        try:
+            xyz = tuple(float(state[key]) for key in "xyz")
+        except (KeyError, TypeError, ValueError):
+            return None
+        return xyz if all(math.isfinite(value) for value in xyz) else None
+
+    def start_pre_grasp_motion(self) -> None:
+        start_xyz = self.fresh_arm_xyz_for_pre_grasp()
+        if start_xyz is None or self.pre_grasp_plan is None:
+            self.fail_pre_grasp_motion("pre_grasp_preflight_failed", {})
+            return
+        target = self.pre_grasp_plan["pre_grasp_tcp_mm"]
+        try:
+            self.pre_grasp_segments = self.pre_grasp_motion_config.build_segments(
+                start_xyz, tuple(float(target[key]) for key in "xyz")
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            self.fail_pre_grasp_motion(
+                "pre_grasp_path_invalid",
+                {"planning_error": f"{type(exc).__name__}:{exc}"},
+            )
+            return
+        self.pre_grasp_segment_index = 0
+        self.send_current_pre_grasp_segment()
+
+    def check_pre_grasp_state_timeout(self) -> None:
+        if self.pending_pre_grasp_state_since_monotonic is None:
+            return
+        if (
+            time.monotonic() - self.pending_pre_grasp_state_since_monotonic
+            >= self.pre_grasp_state_timeout_s
+        ):
+            self.pending_pre_grasp_state_since_monotonic = None
+            self.fail_pre_grasp_motion("fresh_state_after_gripper_open_timeout", {})
+
+    def send_current_pre_grasp_segment(self) -> None:
+        segment = self.pre_grasp_segments[self.pre_grasp_segment_index]
+        command_id = (
+            f"task-{self.session.active_task_id}-pre-grasp-"
+            f"{self.pre_grasp_segment_index + 1}"
+        )
+        self.pending_pre_grasp_command_id = command_id
+        self.pending_pre_grasp_sent_monotonic = time.monotonic()
+        self.pending_pre_grasp_command_accepted = False
+        self.pre_grasp_arrival_stable_count = 0
+        self.session.state = "waiting_pre_grasp_motion"
+        self.session.last_reason = "pre_grasp_segment_requested"
+        self.publish_json(
+            self.arm_command_publisher,
+            {
+                "command_id": command_id,
+                "type": PRE_GRASP_SEGMENT_COMMAND_TYPE,
+                **segment,
+            },
+        )
+        self.publish_state(
+            "waiting_pre_grasp_motion",
+            "pre_grasp_segment_requested",
+            {
+                "pre_grasp_plan": self.pre_grasp_plan,
+                "segment_index": self.pre_grasp_segment_index,
+                "segment_count": len(self.pre_grasp_segments),
+                "segment_target_mm": segment,
+            },
+        )
+
+    def handle_pre_grasp_command_result(self, result: Dict[str, Any]) -> None:
+        if not bool(result.get("accepted", False)):
+            self.fail_pre_grasp_motion(
+                "pre_grasp_command_rejected", {"driver_result": result}
+            )
+            return
+        if result.get("reason") != "command_sent":
+            self.fail_pre_grasp_motion(
+                "pre_grasp_command_result_invalid", {"driver_result": result}
+            )
+            return
+        self.pre_grasp_motion_started = True
+        self.pending_pre_grasp_command_accepted = True
+
+    def update_pre_grasp_arrival(self, payload: Dict[str, Any]) -> None:
+        if (
+            not self.pending_pre_grasp_command_accepted
+            or self.pending_pre_grasp_sent_monotonic is None
+            or time.monotonic() - self.pending_pre_grasp_sent_monotonic
+            < self.pre_grasp_motion_config.minimum_wait_s
+        ):
+            return
+        state = payload.get("state")
+        if not bool(payload.get("state_valid", False)) or not isinstance(state, dict):
+            return
+        target = self.pre_grasp_segments[self.pre_grasp_segment_index]
+        try:
+            actual = tuple(float(state[key]) for key in "xyz")
+            goal = tuple(float(target[key]) for key in "xyz")
+        except (KeyError, TypeError, ValueError):
+            return
+        error_mm = math.dist(actual, goal)
+        if error_mm <= self.pre_grasp_motion_config.position_tolerance_mm:
+            self.pre_grasp_arrival_stable_count += 1
+        else:
+            self.pre_grasp_arrival_stable_count = 0
+        if (
+            self.pre_grasp_arrival_stable_count
+            < self.pre_grasp_motion_config.arrival_stable_samples
+        ):
+            return
+        completed_command_id = self.pending_pre_grasp_command_id
+        self.pending_pre_grasp_command_id = None
+        self.pending_pre_grasp_sent_monotonic = None
+        self.pending_pre_grasp_command_accepted = False
+        self.pre_grasp_arrival_stable_count = 0
+        self.pre_grasp_segment_index += 1
+        if self.pre_grasp_segment_index < len(self.pre_grasp_segments):
+            self.send_current_pre_grasp_segment()
+            return
+        self.pre_grasp_motion_completed = True
+        snapshot = {} if self.frozen_target_snapshot is None else dict(
+            self.frozen_target_snapshot
+        )
+        snapshot.update(
+            {
+                "pre_grasp_plan": self.pre_grasp_plan,
+                "pre_grasp_segment_count": len(self.pre_grasp_segments),
+                "final_pre_grasp_error_mm": error_mm,
+                "last_pre_grasp_command_id": completed_command_id,
+            }
+        )
+        self.publish_state("pre_grasp_reached", "pre_grasp_motion_complete", snapshot)
+        self.publish_result(
+            self.session.active_task_id,
+            "pre_grasp_reached",
+            "pre_grasp_motion_complete",
+            snapshot,
+        )
+        self.session.finish_terminal()
+
+    def check_pre_grasp_motion_timeout(self) -> None:
+        if self.pending_pre_grasp_sent_monotonic is None:
+            return
+        if (
+            time.monotonic() - self.pending_pre_grasp_sent_monotonic
+            >= self.pre_grasp_motion_config.motion_timeout_s
+        ):
+            self.fail_pre_grasp_motion(
+                "pre_grasp_motion_timeout",
+                {
+                    "failed_segment_index": self.pre_grasp_segment_index,
+                    "arrival_stable_count": self.pre_grasp_arrival_stable_count,
+                },
+            )
+
+    def fail_pre_grasp_motion(self, reason: str, detail: Dict[str, Any]) -> None:
+        self.pending_pre_grasp_command_id = None
+        self.pending_pre_grasp_sent_monotonic = None
+        self.pending_pre_grasp_command_accepted = False
+        snapshot = {} if self.frozen_target_snapshot is None else dict(
+            self.frozen_target_snapshot
+        )
+        snapshot.update(detail)
+        self.publish_state("pre_grasp_motion_failed", reason, snapshot)
+        self.publish_result(
+            self.session.active_task_id, "motion_failed", reason, snapshot
         )
         self.session.finish_terminal()
 
