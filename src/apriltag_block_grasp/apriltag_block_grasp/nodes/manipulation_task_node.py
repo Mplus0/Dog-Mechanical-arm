@@ -34,6 +34,7 @@ class ManipulationTaskNode(Node):
         self.declare_parameter("enable_b_search_motion", False)
         self.declare_parameter("enable_observation_motion", False)
         self.declare_parameter("observation_result_timeout_s", 5.0)
+        self.declare_parameter("observation_state_timeout_s", 2.0)
         self.declare_parameter(
             "stability_config_path", str(share / "config" / "target_stability.json")
         )
@@ -65,6 +66,14 @@ class ManipulationTaskNode(Node):
             or self.observation_result_timeout_s <= 0.0
         ):
             raise ValueError("observation_result_timeout_s must be positive")
+        self.observation_state_timeout_s = float(
+            self.get_parameter("observation_state_timeout_s").value
+        )
+        if (
+            not math.isfinite(self.observation_state_timeout_s)
+            or self.observation_state_timeout_s <= 0.0
+        ):
+            raise ValueError("observation_state_timeout_s must be positive")
         timeout_check_period_s = float(
             self.get_parameter("timeout_check_period_s").value
         )
@@ -113,6 +122,7 @@ class ManipulationTaskNode(Node):
         self.observation_motion_completed = False
         self.pending_observation_command_id: Optional[str] = None
         self.pending_observation_sent_monotonic: Optional[float] = None
+        self.pending_observation_state_since_monotonic: Optional[float] = None
         self.timeout_timer = self.create_timer(
             timeout_check_period_s, self.on_timeout_check
         )
@@ -267,6 +277,9 @@ class ManipulationTaskNode(Node):
         if self.session.state == "waiting_observation_motion":
             self.check_observation_motion_timeout()
             return
+        if self.session.state == "waiting_observation_state":
+            self.check_observation_state_timeout()
+            return
         if self.session.active and self.session.state == "waiting_b_motion":
             self.check_b_motion_timeout()
             return
@@ -341,6 +354,9 @@ class ManipulationTaskNode(Node):
             return
         self.latest_arm_state_payload = payload
         self.latest_arm_state_received_monotonic = time.monotonic()
+        if self.session.active and self.session.state == "waiting_observation_state":
+            self.try_start_localization_after_observation()
+            return
         if self.session.active and self.session.state == "waiting_b_motion":
             self.update_b_arrival(payload)
 
@@ -552,21 +568,28 @@ class ManipulationTaskNode(Node):
             )
             return
         self.observation_motion_completed = True
-        if self.enable_b_search_motion and not self.prepare_b_search_for_accepted_task():
-            self.fail_observation_motion("b_search_preflight_failed", {})
-            return
-        if not self.enable_b_search_motion:
-            self.session.restart_localization(
-                time.monotonic(), "observation_motion_complete"
-            )
+        self.pending_observation_state_since_monotonic = time.monotonic()
+        self.session.state = "waiting_observation_state"
+        self.session.last_reason = "waiting_fresh_state_after_observation"
         self.publish_state(
-            "localizing",
-            "observation_motion_complete",
+            "waiting_observation_state",
+            "waiting_fresh_state_after_observation",
             {
                 "observation_command_id": command_id,
                 "observation_driver_result": result,
             },
         )
+
+    def try_start_localization_after_observation(self) -> None:
+        if self.enable_b_search_motion:
+            if not self.prepare_b_search_for_accepted_task():
+                return
+        else:
+            self.session.restart_localization(
+                time.monotonic(), "observation_motion_complete"
+            )
+        self.pending_observation_state_since_monotonic = None
+        self.publish_state("localizing", "observation_motion_complete")
 
     def check_observation_motion_timeout(self) -> None:
         if self.pending_observation_sent_monotonic is None:
@@ -579,10 +602,21 @@ class ManipulationTaskNode(Node):
             self.pending_observation_sent_monotonic = None
             self.fail_observation_motion("observation_result_timeout", {})
 
+    def check_observation_state_timeout(self) -> None:
+        if self.pending_observation_state_since_monotonic is None:
+            return
+        if (
+            time.monotonic() - self.pending_observation_state_since_monotonic
+            >= self.observation_state_timeout_s
+        ):
+            self.pending_observation_state_since_monotonic = None
+            self.fail_observation_motion("fresh_state_after_observation_timeout", {})
+
     def fail_observation_motion(
         self, reason: str, detail: Dict[str, Any]
     ) -> None:
         task_id = self.session.active_task_id
+        self.pending_observation_state_since_monotonic = None
         self.publish_state("observation_motion_failed", reason, detail)
         self.publish_result(task_id, "motion_failed", reason, detail)
         self.session.finish_terminal()
