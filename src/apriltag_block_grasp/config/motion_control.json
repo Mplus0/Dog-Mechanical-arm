@@ -32,7 +32,7 @@
     "arrival_tolerance_deg": 1.5,
     "arrival_stable_samples": 3,
     "motion_timeout_s": 8.0,
-    "maximum_automatic_search_index": 1,
+    "maximum_automatic_search_index": 2,
     "automatic_search_available": true,
     "automatic_search_default_enabled": false
   },
@@ -41,6 +41,6 @@
     "Camera frames remain in the original sensor orientation; no software image rotation is applied.",
     "No observation motion may be sent automatically at node startup.",
     "T=104 Cartesian motion remains disabled until the observation pose test passes.",
-    "Stage 4D automatic search is field-unlocked one offset at a time; field validation currently permits offsets 0 and -5 degrees only."
+    "Stage 4D automatic search is field-unlocked one offset at a time; field validation currently permits offsets 0, -5 and +5 degrees only."
   ]
 }
