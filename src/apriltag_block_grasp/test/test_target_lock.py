@@ -94,6 +94,21 @@ def test_timeout_distinguishes_not_found_from_unstable():
     assert result["reason"] == "target_unstable"
 
 
+def test_unstable_timeout_reports_last_and_best_window_diagnostics():
+    lock = StableTargetLock(config(frame_count=3, timeout=0.3))
+    lock.update(payload((1, (0.0, 0.0, 0.0))), 0.0)
+    lock.update(payload((1, (0.0, 0.0, 0.0))), 0.1)
+    lock.update(payload((1, (0.0, 0.0, 2.0))), 0.2)
+    result = lock.update(payload((1, (0.0, 0.0, 2.5))), 0.3)
+    assert result["status"] == "failed"
+    assert result["reason"] == "target_unstable"
+    assert result["failure_detail"] == "xyz_peak_to_peak_exceeded"
+    assert result["last_xyz_peak_to_peak_mm"] == {"x": 0.0, "y": 0.0, "z": 2.5}
+    assert result["best_xyz_peak_to_peak_mm"] == {"x": 0.0, "y": 0.0, "z": 2.0}
+    assert result["best_max_threshold_ratio"] == 2.0
+    assert result["threshold_exceeded_axes"] == ["z"]
+
+
 def test_stale_or_unsynchronized_input_is_not_sampled():
     lock = StableTargetLock(config())
     result = lock.update(payload((0, (0.0, 0.0, 0.0)), delta=0.21), 0.0)

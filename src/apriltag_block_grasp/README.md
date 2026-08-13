@@ -659,6 +659,11 @@ ros2 topic echo --full-length \
 `task_cycle_enabled=false`、`motion_commands_enabled=false`。完成一次尝试后需要重启该只读
 节点再测试下一个场景；显式任务入口和复位规则将在任务周期小阶段实现。
 
+若结果为 `target_unstable`，诊断字段会保留最后一个完整窗口和本轮最接近通过的窗口：
+`failure_detail`、`last_xyz_peak_to_peak_mm`、`best_xyz_peak_to_peak_mm`、
+`best_max_threshold_ratio` 及 `threshold_exceeded_axes`。`collected_frame_count=10` 只表示窗口
+已经收满，并不等于三个轴均通过阈值。
+
 ### 单次笛卡尔 XYZ 小步安全工具
 
 `move_cartesian_fixed_orientation_safe` 用一条 RoArm-M3 `T=1041` 命令验证 XYZ 小步运动。

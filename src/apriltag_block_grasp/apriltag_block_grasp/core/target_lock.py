@@ -56,6 +56,9 @@ class StableTargetLock:
         self.sample_stamps: List[Optional[float]] = []
         self.window_reset_count = 0
         self.ever_saw_allowed_target = False
+        self.last_xyz_peak_to_peak_mm: Optional[Tuple[float, float, float]] = None
+        self.best_xyz_peak_to_peak_mm: Optional[Tuple[float, float, float]] = None
+        self.best_max_threshold_ratio: Optional[float] = None
         self.terminal_result: Optional[Dict[str, Any]] = None
 
     @staticmethod
@@ -132,12 +135,35 @@ class StableTargetLock:
             "ever_saw_allowed_target": self.ever_saw_allowed_target,
         }
 
-    def _terminal_failure(self, now_s: float) -> Dict[str, Any]:
+    @staticmethod
+    def _xyz_dict(values: Tuple[float, float, float]) -> Dict[str, float]:
+        return {"x": values[0], "y": values[1], "z": values[2]}
+
+    def _terminal_failure(self, now_s: float, detail_reason: str) -> Dict[str, Any]:
         reason = "target_unstable" if self.ever_saw_allowed_target else "target_not_found"
         result = self._base_status("failed", reason)
         result["elapsed_s"] = (
             None if self.attempt_started_s is None else now_s - self.attempt_started_s
         )
+        result["failure_detail"] = detail_reason
+        if self.last_xyz_peak_to_peak_mm is not None:
+            result["last_xyz_peak_to_peak_mm"] = self._xyz_dict(
+                self.last_xyz_peak_to_peak_mm
+            )
+            result["threshold_exceeded_axes"] = [
+                axis
+                for axis, span, threshold in zip(
+                    ("x", "y", "z"),
+                    self.last_xyz_peak_to_peak_mm,
+                    self.config.xyz_peak_to_peak_threshold_mm,
+                )
+                if span > threshold
+            ]
+        if self.best_xyz_peak_to_peak_mm is not None:
+            result["best_xyz_peak_to_peak_mm"] = self._xyz_dict(
+                self.best_xyz_peak_to_peak_mm
+            )
+            result["best_max_threshold_ratio"] = self.best_max_threshold_ratio
         self.terminal_result = result
         return result
 
@@ -188,6 +214,17 @@ class StableTargetLock:
             if len(self.samples) == self.config.stable_frame_count:
                 medians, spans = self._axis_statistics(self.samples)
                 thresholds = self.config.xyz_peak_to_peak_threshold_mm
+                spans_tuple = (spans[0], spans[1], spans[2])
+                self.last_xyz_peak_to_peak_mm = spans_tuple
+                max_threshold_ratio = max(
+                    spans[index] / thresholds[index] for index in range(3)
+                )
+                if (
+                    self.best_max_threshold_ratio is None
+                    or max_threshold_ratio < self.best_max_threshold_ratio
+                ):
+                    self.best_max_threshold_ratio = max_threshold_ratio
+                    self.best_xyz_peak_to_peak_mm = spans_tuple
                 if all(spans[index] <= thresholds[index] for index in range(3)):
                     result = self._base_status("stable", "stable_target_ready")
                     result.update(
@@ -213,7 +250,7 @@ class StableTargetLock:
 
         elapsed = now_s - self.attempt_started_s
         if elapsed >= self.config.stable_timeout_s:
-            return self._terminal_failure(now_s)
+            return self._terminal_failure(now_s, sample_reason)
 
         result = self._base_status(
             "collecting" if self.locked_id is not None else "waiting",
