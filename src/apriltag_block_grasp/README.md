@@ -347,9 +347,9 @@ ros2 run apriltag_block_grasp probe_handeye_chain \
 ```
 
 RoArm-M3 的 ESP32 USB 串口在打开时可能通过 DTR/RTS 自动下载电路触发控制板复位；
-其直接表现是 OLED 刷新，随后固件执行上电初始回位。这不是探针发送了运动 JSON，
-但仍属于打开串口造成的硬件副作用。指定 `--wait-for-ready` 后，探针先打开且持续占用
-串口，等待回位结束并提示按 Enter。此时再调整到观察姿态、固定标签和物块，最后按
+已观察到 OLED 刷新，但常驻只读驱动实测没有观察到固定下降。此前固定下降与显式运动命令
+强相关，不能再解释为串口打开后的必然初始回位。指定 `--wait-for-ready` 后，探针先打开且
+持续占用串口，等待控制器稳定并提示按 Enter。此时再调整到观察姿态、固定标签和物块，最后按
 Enter。探针会立即清空等待和调整期间积压的旧 `T=1051` 状态帧，再启动相机；后续
 采样不会重新打开串口，也不会把调整前的机械臂状态与调整后的相机图像配对。
 
@@ -373,7 +373,7 @@ rotation_rpy_deg = [180.0, 0.0, -90.0]
 
 探针同时输出标签中心 `base_tag_mm` 和物块几何中心 `base_object_mm`。它不应用
 `base_position_correction_mm` 或旧包的 `base Z + 100 mm`。RGBD 深度关闭，机械臂
-串口数据方向仍为只读且不发送命令；但如上所述，首次打开串口可能复位控制板。
+串口数据方向仍为只读且不发送命令；但如上所述，首次打开串口可能刷新/复位控制板。
 
 请先反馈 `summary`、`failure_counts`、`per_id_stability` 和最后一条 `samples`。首轮只
 判断静止状态下坐标链是否有限、矩阵方向是否合理，以及 `base_tag_mm`、
@@ -483,7 +483,7 @@ ros2 run apriltag_block_grasp probe_handeye_pair_b \
 ### 常驻只读机械臂驱动验证
 
 `roarm_driver_node` 是新包内部独立实现的第一版常驻驱动。当前版本只用于区分“打开串口
-导致的控制器复位动作”和“显式运动命令”：
+导致的控制器/OLED复位”和“显式运动命令导致的机械臂动作”：
 
 - 节点生命周期内只打开一次 `/dev/ttyUSB0`；
 - 持续读取 `T=1051` 并发布 `/roarm_m3/state`；
@@ -500,7 +500,8 @@ ros2 run apriltag_block_grasp roarm_driver_node \
   --ros-args -p port:=/dev/ttyUSB0
 ```
 
-首次打开串口仍可能使 ESP32 复位并产生一次固定动作。保持节点连续运行至少 60 秒，不启动
+首次打开串口仍可能使 ESP32/OLED 复位，但首轮实测没有观察到固定下降。保持节点连续运行
+至少 60 秒，不启动
 其他机械臂程序，也不向命令话题发布消息。在另一个终端检查：
 
 ```bash
@@ -508,9 +509,21 @@ ros2 topic echo --once --full-length /roarm_m3/state std_msgs/msg/String
 ```
 
 验收时应看到 `connected=true`、`state_valid=true`、`serial_open_count=1`、
-`serial_bytes_transmitted=0`、`motion_commands_enabled=false`，且固定动作只在节点首次连接时
-出现一次，持续运行期间不重复。按 `Ctrl-C` 停止节点会关闭串口；再次启动会重新打开串口，
-因此可能再次复位，不能把重启后的动作计为同一次连接内重复动作。
+`serial_bytes_transmitted=0`、`motion_commands_enabled=false`，且持续运行期间没有机械臂动作。
+当前证据表明此前的固定下降与显式运动命令强相关，不是单纯打开串口造成。按 `Ctrl-C` 停止
+节点会关闭串口；再次启动会重新打开串口并可能再次引起 ESP32/OLED 复位。
+
+常驻只读驱动通过后，使用 `probe_roarm_model` 离线检查已安装的官方模型和 MoveIt 配置：
+
+```bash
+source /home/sunrise/dog/roarm_ws/install/setup.bash
+source /home/sunrise/dog/ros2_red_block_ws/install/setup.bash
+ros2 run apriltag_block_grasp probe_roarm_model
+```
+
+该工具只读取 `roarm_description` 和 `roarm_moveit` 的安装目录，列出 URDF/Xacro/SRDF 中可直接
+解析的关节、父子连杆、关节限制及相关配置行。不创建 ROS 节点、不连接串口/相机、不调用
+服务，也不启动任何官方 launch。若 Xacro 中仍含表达式，工具只原样报告，不为其猜测数值。
 
 ### 单次笛卡尔 XYZ 小步安全工具
 

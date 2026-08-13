@@ -70,8 +70,8 @@ class RoArmDriverNode(Node):
         self._started_monotonic = time.monotonic()
 
         self.get_logger().warning(
-            "Opening the RoArm serial port once. The ESP32 may reset and move "
-            "during this initial open; no motion command will be transmitted."
+            "Opening the RoArm serial port once. The ESP32/OLED may reset during "
+            "this initial open; no motion command will be transmitted."
         )
         self.reader.connect(settle_time_s=settle_time_s)
         self._serial_open_count = 1

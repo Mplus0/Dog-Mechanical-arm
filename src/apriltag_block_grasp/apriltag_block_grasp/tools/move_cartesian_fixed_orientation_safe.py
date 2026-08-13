@@ -77,8 +77,9 @@ def parse_arguments():
         action="store_true",
         help=(
             "After opening serial, wait for Enter before reading the initial "
-            "state. Useful because opening the ESP32 serial port may reset/home "
-            "the arm. This wait is mandatory when --enable-motion is used."
+            "state. Opening the ESP32 serial port may reset the controller, "
+            "although persistent read-only testing did not observe arm motion. "
+            "This wait is mandatory when --enable-motion is used."
         ),
     )
     parser.add_argument(
@@ -177,7 +178,8 @@ def main() -> int:
                 else "Dry-run only: no command will be sent after Enter.\n"
             )
             print(
-                "\nThe serial port is open and may have reset the RoArm controller.\n"
+                "\nThe serial port is open and may have reset the RoArm controller; "
+                "read-only testing did not observe an associated arm motion.\n"
                 "Remove the block, then adjust the arm near the intended grasp pose "
                 "using a control path that does not open this serial port.\n"
                 + execution_notice
