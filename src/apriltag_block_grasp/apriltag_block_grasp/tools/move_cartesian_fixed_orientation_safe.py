@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dry-run-first RoArm T=104 XYZ motion with a calibrated tool orientation."""
+"""Dry-run-first RoArm T=104 relative XYZ motion utility."""
 
 import argparse
 import json
@@ -43,18 +43,28 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
         description=(
             "Send at most one low-speed RoArm T=104 command. Target XYZ is a "
-            "small offset from the current TCP; pitch/roll come from the grasp "
-            "calibration. Cartesian yaw/B cannot be commanded by T=104."
+            "small offset from the current TCP. By default, pitch/roll/gripper "
+            "are copied from the current T=1051 feedback. Cartesian yaw/B "
+            "cannot be commanded by T=104."
         )
     )
     parser.add_argument("--port", default="/dev/ttyUSB0")
     parser.add_argument("--calibration-path", default=default_calibration)
+    parser.add_argument(
+        "--orientation-source",
+        choices=("current", "calibration"),
+        default="current",
+        help=(
+            "Use current T=1051 tit/r feedback (default), or the provisional "
+            "grasp calibration, as the T=104 pitch/roll target."
+        ),
+    )
     parser.add_argument("--dx-mm", type=float, default=0.0)
     parser.add_argument("--dy-mm", type=float, default=0.0)
     parser.add_argument("--dz-mm", type=float, default=0.0)
     parser.add_argument("--speed", type=float, default=0.05)
-    parser.add_argument("--max-axis-delta-mm", type=float, default=10.0)
-    parser.add_argument("--max-distance-mm", type=float, default=10.0)
+    parser.add_argument("--max-axis-delta-mm", type=float, default=5.0)
+    parser.add_argument("--max-distance-mm", type=float, default=5.0)
     parser.add_argument("--max-pitch-change-deg", type=float, default=15.0)
     parser.add_argument("--max-roll-change-deg", type=float, default=5.0)
     parser.add_argument("--position-tolerance-mm", type=float, default=2.0)
@@ -88,7 +98,7 @@ def main() -> int:
     controller = RoArmCartesianController(port=args.port, timeout_s=0.2)
     report: Dict[str, Any] = {
         "tool": "apriltag_block_grasp.move_cartesian_fixed_orientation_safe",
-        "scope": "single_T104_relative_XYZ_with_calibrated_pitch_roll",
+        "scope": "single_T104_relative_XYZ",
         "dry_run": not args.enable_motion,
         "enable_motion": bool(args.enable_motion),
         "camera_opened": False,
@@ -156,17 +166,6 @@ def main() -> int:
                 f"max_distance_mm={max_distance:.3f}"
             )
 
-        calibration = load_grasp_calibration(args.calibration_path)
-        target_roll = float(calibration.grasp_tool_orientation_rpy_rad[0])
-        target_pitch = float(calibration.grasp_tool_orientation_rpy_rad[1])
-        configured_yaw = float(calibration.grasp_tool_orientation_rpy_rad[2])
-        report["calibration"] = {
-            "path": calibration.path,
-            "orientation_rpy_rad": [target_roll, target_pitch, configured_yaw],
-            "orientation_order": "Rz(yaw) @ Ry(pitch) @ Rx(roll)",
-            "applied_by_T104": {"roll_r": True, "pitch_t": True, "yaw_B": False},
-        }
-
         controller.connect()
         if args.enable_motion or args.wait_for_ready:
             execution_notice = (
@@ -203,6 +202,31 @@ def main() -> int:
         current_pitch = state_number(initial_state, "tit")
         current_roll = state_number(initial_state, "r")
         current_gripper = state_number(initial_state, "g")
+        current_yaw = state_number(initial_state, "b")
+        calibration_report = None
+        if args.orientation_source == "current":
+            target_pitch = current_pitch
+            target_roll = current_roll
+            configured_yaw = None
+        else:
+            calibration = load_grasp_calibration(args.calibration_path)
+            target_roll = float(calibration.grasp_tool_orientation_rpy_rad[0])
+            target_pitch = float(calibration.grasp_tool_orientation_rpy_rad[1])
+            configured_yaw = float(calibration.grasp_tool_orientation_rpy_rad[2])
+            calibration_report = {
+                "path": calibration.path,
+                "orientation_rpy_rad": [
+                    target_roll,
+                    target_pitch,
+                    configured_yaw,
+                ],
+                "orientation_order": "Rz(yaw) @ Ry(pitch) @ Rx(roll)",
+                "applied_by_T104": {
+                    "roll_r": True,
+                    "pitch_t": True,
+                    "yaw_B": False,
+                },
+            }
         target_xyz = [current_xyz[i] + deltas[i] for i in range(3)]
         pitch_change_deg = math.degrees(target_pitch - current_pitch)
         roll_change_deg = math.degrees(target_roll - current_roll)
@@ -222,24 +246,28 @@ def main() -> int:
                 "initial_empty_read_count": initial_empty_reads,
                 "requested_delta_xyz_mm": deltas,
                 "requested_distance_mm": distance,
+                "orientation_source": args.orientation_source,
                 "target_xyz_mm": target_xyz,
                 "target_pitch_rad": target_pitch,
                 "target_roll_rad": target_roll,
                 "uncommanded_configured_yaw_rad": configured_yaw,
+                "initial_uncommanded_yaw_B_rad": current_yaw,
                 "pitch_change_deg": pitch_change_deg,
                 "roll_change_deg": roll_change_deg,
                 "held_gripper_rad": current_gripper,
                 "planned_command": command,
             }
         )
+        if calibration_report is not None:
+            report["calibration"] = calibration_report
         if abs(pitch_change_deg) > max_pitch_change_deg:
             raise ValueError(
-                f"calibrated pitch change {pitch_change_deg:.3f} deg exceeds "
+                f"target pitch change {pitch_change_deg:.3f} deg exceeds "
                 f"max_pitch_change_deg={max_pitch_change_deg:.3f}"
             )
         if abs(roll_change_deg) > max_roll_change_deg:
             raise ValueError(
-                f"calibrated roll change {roll_change_deg:.3f} deg exceeds "
+                f"target roll change {roll_change_deg:.3f} deg exceeds "
                 f"max_roll_change_deg={max_roll_change_deg:.3f}"
             )
 

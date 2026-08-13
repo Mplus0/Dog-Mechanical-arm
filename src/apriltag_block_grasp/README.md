@@ -480,19 +480,19 @@ ros2 run apriltag_block_grasp probe_handeye_pair_b \
 显式启用后最多发送一条 `T=121, joint=1`，不会重试或恢复。输出直接给出两组
 `base_tag` 中位数及三轴差值和差值范数；只用于验证手眼链，不用于抓取动作。
 
-### 单次笛卡尔姿态复现安全工具
+### 单次笛卡尔 XYZ 小步安全工具
 
-`move_cartesian_fixed_orientation_safe` 用一条 RoArm `T=104` 命令验证固定抓取姿态。
+`move_cartesian_fixed_orientation_safe` 用一条 RoArm `T=104` 命令验证 XYZ 小步运动。
 固件命令字段为 `x/y/z/t/r/g/spd`：它可以指定 TCP 的 XYZ、工具俯仰 `t`、工具滚转
 `r` 和夹爪 `g`，但没有独立的 yaw/B 字段。B 角由固件逆运动学根据目标位置确定，因此该工具
 不能承诺在不同 XYZ 下保持完整 RPY 不变。
 
-工具默认只演练，不发送命令。它读取当前 `T=1051`，保持当前夹爪开度，以当前 XYZ 加上
-`dx/dy/dz` 作为目标，并从 `config/grasp_calibration.json` 读取标定的 pitch/roll。默认每轴和
-三维总位移都不超过 10 mm，速度为 `0.05`，只允许发送一条命令，不重试、不恢复，也不控制
-相机和补光灯。
+工具默认只演练，不发送命令。默认 `--orientation-source current`：读取新鲜 `T=1051` 后，
+将当前 `tit/r/g` 原样复制到命令，仅在当前 XYZ 上增加 `dx/dy/dz`。默认每轴和三维总位移
+都不超过 5 mm，速度为 `0.05`，只允许发送一条命令，不重试、不恢复，也不控制相机和补光灯。
+`--orientation-source calibration` 仍保留用于后续姿态复现，但当前阶段不要使用。
 
-首次测试必须移开物块并清空机械臂周围空间。先编译并执行零位移演练：
+首次测试必须移开物块并清空机械臂周围空间。先编译并演练 `X + 5 mm`：
 
 ```bash
 colcon build --packages-select apriltag_block_grasp --event-handlers console_direct+
@@ -500,34 +500,34 @@ source install/setup.bash
 
 ros2 run apriltag_block_grasp move_cartesian_fixed_orientation_safe \
   --port /dev/ttyUSB0 \
-  --wait-for-ready
+  --dx-mm 5.0
 ```
 
-串口打开并回位后，使用不占用该串口的控制方式把机械臂调到接近抓取姿态，再按 Enter。
 确认 JSON 中：
 
-1. `requested_delta_xyz_mm` 为 `[0, 0, 0]`；
-2. `target_xyz_mm` 等于打开串口并完成回位后的当前 XYZ；
-3. `planned_command.T=104`；
-4. `planned_command.t/r` 来自抓取标定，`planned_command.g` 等于当前反馈；
-5. `pitch_change_deg` 和 `roll_change_deg` 没有超过安全限制；
-6. `motion_command_sent=false`。
+1. `orientation_source=current`；
+2. `requested_delta_xyz_mm` 为 `[5, 0, 0]`；
+3. `target_xyz_mm.x = initial_state.x + 5`，Y/Z 不变；
+4. `planned_command.T=104`；
+5. `planned_command.t/r/g` 分别等于当前反馈 `tit/r/g`；
+6. `pitch_change_deg=0`、`roll_change_deg=0`；
+7. `motion_command_sent=false`。
 
-确认机械臂处于无碰撞空间后，才执行首次零位移姿态复现：
+确认机械臂处于无碰撞空间后，才执行首次 `X + 5 mm` 实机测试：
 
 ```bash
 ros2 run apriltag_block_grasp move_cartesian_fixed_orientation_safe \
   --port /dev/ttyUSB0 \
+  --dx-mm 5.0 \
   --enable-motion
 ```
 
 串口打开可能使 ESP32 复位并回到固件初始位姿。显式启用运动时，工具会在串口打开后等待
-Enter；此时应再次清空工作空间，确认安全后再按 Enter。工具随后清除旧状态帧、读取当前状态，
-并发送恰好一条命令。首次测试不要设置 `dx/dy/dz`，也不要放置物块。反馈满足 XYZ 误差
+Enter；此时无需使用网页调整机械臂，只需再次确认工作空间安全。工具随后清除旧状态帧、读取
+当前状态，并发送恰好一条命令。反馈满足 XYZ 误差
 `2 mm`、pitch/roll 误差 `2°` 且连续 3 帧稳定时报告 `target_reached`。
 
-零位移测试通过后，下一轮再单独测试一个不超过 5 mm 的轴向微调；在确认前不要用本工具
-对准、下降或夹取物块。
+X 轴测试通过后，再分别测试 Y/Z 单轴 5 mm；在确认前不要用本工具对准、下降或夹取物块。
 
 ### PnP 多解与深度只读诊断
 
