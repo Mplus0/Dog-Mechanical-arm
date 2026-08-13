@@ -36,6 +36,14 @@ def test_return_from_last_search_angle_uses_safe_transition():
     assert config().route_to_b0(0.5, 4) == [5.5, 0.5]
 
 
+def test_recovery_route_uses_measured_feedback_instead_of_nominal_target():
+    assert config().route_from_actual_to_b0(-0.439453, -8.877) == [-0.439453]
+
+
+def test_default_field_gate_only_enables_offset_zero():
+    assert config().maximum_automatic_search_index == 0
+
+
 def test_b0_near_limit_is_rejected_before_any_motion():
     with pytest.raises(ValueError, match="exceeds the enabled absolute B range"):
         config().absolute_targets(15.0)

@@ -18,6 +18,7 @@ class BSearchConfig:
     arrival_tolerance_deg: float
     arrival_stable_samples: int
     motion_timeout_s: float
+    maximum_automatic_search_index: int = 0
 
     def __post_init__(self) -> None:
         values = (
@@ -48,6 +49,8 @@ class BSearchConfig:
             raise ValueError("B-search positive parameters must be greater than zero")
         if self.arrival_stable_samples <= 0:
             raise ValueError("arrival_stable_samples must be positive")
+        if not 0 <= self.maximum_automatic_search_index < len(self.offsets_deg):
+            raise ValueError("maximum_automatic_search_index is outside offsets_deg")
 
     def absolute_targets(self, b0_deg: float) -> Tuple[float, ...]:
         if not math.isfinite(b0_deg):
@@ -84,6 +87,16 @@ class BSearchConfig:
         targets = self.absolute_targets(b0_deg)
         current = targets[current_index]
         return self._segment_toward(current, b0_deg)
+
+    def route_from_actual_to_b0(
+        self, b0_deg: float, actual_b_deg: float
+    ) -> List[float]:
+        """Plan recovery from measured feedback, not an assumed search target."""
+        if not math.isfinite(actual_b_deg):
+            raise ValueError("actual B feedback must be finite")
+        if not self.minimum_absolute_deg <= actual_b_deg <= self.maximum_absolute_deg:
+            raise ValueError("actual B feedback is outside the enabled absolute range")
+        return self._segment_toward(actual_b_deg, b0_deg)
 
     def _route_via_b0(
         self, b0_deg: float, current: float, target: float
@@ -127,4 +140,7 @@ def load_b_search_config(path: str) -> BSearchConfig:
         arrival_tolerance_deg=float(search["arrival_tolerance_deg"]),
         arrival_stable_samples=int(search["arrival_stable_samples"]),
         motion_timeout_s=float(search["motion_timeout_s"]),
+        maximum_automatic_search_index=int(
+            search.get("maximum_automatic_search_index", 0)
+        ),
     )

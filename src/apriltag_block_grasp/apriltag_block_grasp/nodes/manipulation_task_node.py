@@ -96,6 +96,7 @@ class ManipulationTaskNode(Node):
         self.pending_b_command_accepted = False
         self.b_arrival_stable_count = 0
         self.b_command_sequence = 0
+        self.pending_terminal_b_failure: Optional[Dict[str, Any]] = None
         self.timeout_timer = self.create_timer(
             timeout_check_period_s, self.on_timeout_check
         )
@@ -125,6 +126,11 @@ class ManipulationTaskNode(Node):
             "gripper_commands_enabled": False,
             "motion_commands_enabled": self.enable_b_search_motion,
             "motion_scope": "B_joint_search_only" if self.enable_b_search_motion else "none",
+            "b_search_maximum_index": (
+                self.b_search_config.maximum_automatic_search_index
+                if self.enable_b_search_motion
+                else None
+            ),
         }
 
     def publish_json(self, publisher, payload: Dict[str, Any]) -> None:
@@ -340,7 +346,10 @@ class ManipulationTaskNode(Node):
 
     def advance_b_search(self) -> bool:
         next_index = self.search_index + 1
-        if next_index >= len(self.b_search_config.offsets_deg):
+        if (
+            next_index >= len(self.b_search_config.offsets_deg)
+            or next_index > self.b_search_config.maximum_automatic_search_index
+        ):
             return False
         route = self.b_search_config.route_between(
             self.cycle_observation_b_deg, self.search_index, next_index
@@ -453,19 +462,102 @@ class ManipulationTaskNode(Node):
             self.fail_b_search("b_motion_timeout", {})
 
     def fail_b_search(self, reason: str, detail: Dict[str, Any]) -> None:
+        failure_detail = {
+            **detail,
+            "failed_b_target_deg": self.pending_b_target_deg,
+            "failed_b_command_id": self.pending_b_command_id,
+            "arrival_stable_count": self.b_arrival_stable_count,
+        }
+        if self.pending_terminal_b_failure is not None:
+            original = dict(self.pending_terminal_b_failure)
+            terminal_detail = {
+                **failure_detail,
+                "original_b_failure_reason": original.get("reason"),
+                "b0_recovery_attempted": True,
+                "b0_recovery_succeeded": False,
+            }
+            self.finish_b_search_failure("b0_recovery_failed", terminal_detail)
+            return
+
+        actual_b_deg = self.latest_b_deg_for_preflight()
+        if actual_b_deg is None or self.cycle_observation_b_deg is None:
+            failure_detail.update(
+                {
+                    "b0_recovery_attempted": False,
+                    "b0_recovery_succeeded": False,
+                    "b0_recovery_failure": "no_fresh_b_feedback_or_cycle_b0",
+                }
+            )
+            self.finish_b_search_failure(reason, failure_detail)
+            return
+
+        try:
+            recovery_route = self.b_search_config.route_from_actual_to_b0(
+                self.cycle_observation_b_deg, actual_b_deg
+            )
+        except ValueError as exc:
+            failure_detail.update(
+                {
+                    "actual_b_deg_at_failure": actual_b_deg,
+                    "b0_recovery_attempted": False,
+                    "b0_recovery_succeeded": False,
+                    "b0_recovery_failure": str(exc),
+                }
+            )
+            self.finish_b_search_failure(reason, failure_detail)
+            return
+
+        self.pending_terminal_b_failure = {
+            "reason": reason,
+            **failure_detail,
+            "actual_b_deg_at_failure": actual_b_deg,
+            "b0_recovery_attempted": True,
+        }
+        self.clear_b_route()
+        self.publish_state(
+            "recovering_b0_after_failure",
+            reason,
+            {
+                "actual_b_deg_at_failure": actual_b_deg,
+                "b0_recovery_route_deg": recovery_route,
+            },
+        )
+        if not recovery_route:
+            self.complete_return_to_b0()
+            return
+        self.start_b_route(recovery_route, None, True)
+
+    def finish_b_search_failure(self, reason: str, detail: Dict[str, Any]) -> None:
         task_id = self.session.active_task_id
         self.publish_state("b_search_failed", reason, detail)
         self.publish_result(task_id, "localization_failed", reason, detail)
         self.clear_b_route()
+        self.pending_terminal_b_failure = None
         self.session.finish_terminal()
 
     def complete_return_to_b0(self) -> None:
+        if self.pending_terminal_b_failure is not None:
+            failure = dict(self.pending_terminal_b_failure)
+            reason = str(failure.pop("reason"))
+            failure.update(
+                {
+                    "returned_to_cycle_b0": True,
+                    "b0_recovery_succeeded": True,
+                }
+            )
+            self.finish_b_search_failure(reason, failure)
+            return
         reason = "target_unstable" if self.search_saw_target else "target_not_found"
         self.clear_b_route()
         self.search_index = 0
         self.session.mark_reposition_required(reason)
         extra = {
             "search_offsets_deg": list(self.b_search_config.offsets_deg),
+            "enabled_search_offsets_deg": list(
+                self.b_search_config.offsets_deg[
+                    : self.b_search_config.maximum_automatic_search_index + 1
+                ]
+            ),
             "returned_to_cycle_b0": True,
             "reposition_required": True,
         }
