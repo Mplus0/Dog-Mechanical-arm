@@ -38,6 +38,7 @@ setup(
             "probe_handeye_pair_b = apriltag_block_grasp.tools.probe_handeye_pair_b:main",
             "probe_pnp_solutions = apriltag_block_grasp.tools.probe_pnp_solutions:main",
             "move_cartesian_fixed_orientation_safe = apriltag_block_grasp.tools.move_cartesian_fixed_orientation_safe:main",
+            "probe_official_motion_interfaces = apriltag_block_grasp.tools.probe_official_motion_interfaces:main",
         ],
     },
 )

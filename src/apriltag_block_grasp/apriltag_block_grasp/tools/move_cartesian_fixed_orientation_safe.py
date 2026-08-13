@@ -114,6 +114,12 @@ def main() -> int:
         "summary": {"valid": False},
     }
     try:
+        if args.enable_motion:
+            raise RuntimeError(
+                "direct T=104 motion is disabled: two hardware tests did not "
+                "preserve the requested XYZ/pitch, and the current official "
+                "RoArm-M3 SDK uses T=1041 for pose control"
+            )
         deltas = [
             finite_float(args.dx_mm, "dx_mm"),
             finite_float(args.dy_mm, "dy_mm"),

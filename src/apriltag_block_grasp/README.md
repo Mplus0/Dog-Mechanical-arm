@@ -513,7 +513,10 @@ ros2 run apriltag_block_grasp move_cartesian_fixed_orientation_safe \
 6. `pitch_change_deg=0`、`roll_change_deg=0`；
 7. `motion_command_sent=false`。
 
-确认机械臂处于无碰撞空间后，才执行首次 `X + 5 mm` 实机测试：
+直接 `T=104` 的实机发送现已停用。两次 `X +/-5 mm` 测试均未保持目标 XYZ/pitch：机械臂
+反而沿 Z 下降约 24--25 mm。当前官方 RoArm-M3 SDK 使用 `T=1041` 生成位置控制命令，
+而旧功能包沿用的 `T=104` 不适用于当前固件。即使指定 `--enable-motion`，工具也会在打开
+串口之前拒绝执行；不要继续使用以下旧测试命令：
 
 ```bash
 ros2 run apriltag_block_grasp move_cartesian_fixed_orientation_safe \
@@ -522,12 +525,18 @@ ros2 run apriltag_block_grasp move_cartesian_fixed_orientation_safe \
   --enable-motion
 ```
 
-串口打开可能使 ESP32 复位并回到固件初始位姿。显式启用运动时，工具会在串口打开后等待
-Enter；此时无需使用网页调整机械臂，只需再次确认工作空间安全。工具随后清除旧状态帧、读取
-当前状态，并发送恰好一条命令。反馈满足 XYZ 误差
-`2 mm`、pitch/roll 误差 `2°` 且连续 3 帧稳定时报告 `target_reached`。
+下一步改用官方 ROS 2/MoveIt 服务。在启动任何机械臂节点或调用服务之前，先运行完全只读的
+接口探针：
 
-X 轴测试通过后，再分别测试 Y/Z 单轴 5 mm；在确认前不要用本工具对准、下降或夹取物块。
+```bash
+ros2 run apriltag_block_grasp probe_official_motion_interfaces
+```
+
+该探针不打开串口、不创建 service client，也不发送 service request；它只列出已安装的
+`GetPoseCmd`、`MoveJointCmd`、`MoveLineCmd` 请求/响应字段，并读取 ROS 图中对应服务是否已存在。
+将完整 JSON 返回后，再确定采用 `/move_line_cmd` 还是 `/move_joint_cmd`。
+
+在官方接口验证完成前，不再进行任何 XYZ 实机测试。
 
 ### PnP 多解与深度只读诊断
 
