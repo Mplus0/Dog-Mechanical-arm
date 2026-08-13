@@ -118,3 +118,13 @@ def test_stale_or_unsynchronized_input_is_not_sampled():
     result = lock.update(payload((0, (0.0, 0.0, 0.0)), age=0.11), 0.1)
     assert result["reason"] == "arm_state_stale"
     assert result["collected_frame_count"] == 0
+
+
+def test_explicit_timeout_check_works_without_any_candidate_update():
+    lock = StableTargetLock(config(timeout=1.0))
+    lock.start(5.0)
+    assert lock.check_timeout(5.9) is None
+    result = lock.check_timeout(6.0)
+    assert result["status"] == "failed"
+    assert result["reason"] == "target_not_found"
+    assert result["failure_detail"] == "candidate_message_timeout"

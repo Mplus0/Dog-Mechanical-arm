@@ -11,22 +11,10 @@ from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
 from std_msgs.msg import String
 
-from apriltag_block_grasp.core.target_lock import StableTargetLock, TargetStabilityConfig
-
-
-def load_config(path: str) -> TargetStabilityConfig:
-    with Path(path).open("r", encoding="utf-8") as stream:
-        data = json.load(stream)
-    return TargetStabilityConfig(
-        selection_order=tuple(int(value) for value in data["selection_order"]),
-        stable_frame_count=int(data["stable_frame_count"]),
-        xyz_peak_to_peak_threshold_mm=tuple(
-            float(value) for value in data["xyz_peak_to_peak_threshold_mm"]
-        ),
-        stable_timeout_s=float(data["stable_timeout_s"]),
-        max_pnp_arm_stamp_delta_s=float(data["max_pnp_arm_stamp_delta_s"]),
-        max_arm_state_reported_age_s=float(data["max_arm_state_reported_age_s"]),
-    )
+from apriltag_block_grasp.core.target_lock import (
+    StableTargetLock,
+    load_target_stability_config,
+)
 
 
 class StableTargetNode(Node):
@@ -42,7 +30,7 @@ class StableTargetNode(Node):
         self.candidate_topic = str(self.get_parameter("candidate_topic").value)
         self.stable_target_topic = str(self.get_parameter("stable_target_topic").value)
         config_path = str(self.get_parameter("stability_config_path").value)
-        self.config = load_config(config_path)
+        self.config = load_target_stability_config(config_path)
         self.lock = StableTargetLock(self.config)
         self.publisher = self.create_publisher(String, self.stable_target_topic, 10)
         self.subscription = self.create_subscription(

@@ -664,6 +664,64 @@ ros2 topic echo --full-length \
 `best_max_threshold_ratio` 及 `threshold_exceeded_axes`。`collected_frame_count=10` 只表示窗口
 已经收满，并不等于三个轴均通过阈值。
 
+### Stage 4C：命令驱动的定位任务（只读）
+
+Stage 4B 的仅 ID 0、仅 ID 1、ID 0/1 同时出现三种现场测试均已通过。Stage 4C 增加已经确认的
+包内接口：
+
+```text
+命令：/apriltag_grasp/task_cmd
+状态：/apriltag_grasp/task_state
+结果：/apriltag_grasp/task_result
+类型：std_msgs/msg/String + JSON
+```
+
+本阶段的 `manipulation_task_node` 只完成一次命令驱动的稳定定位。它不进入观察姿态、不搜索
+B 关节、不控制夹爪，也不执行抓取。定位通过后的结果名为 `target_snapshot_ready`，不能解释为
+`pick_success`；`picked_ids`、`placed_ids` 和 `carrying_id` 均不会改变。
+
+保持 `roarm_driver_node`、`apriltag_pnp_node` 和 `target_candidate_node` 三个上游节点运行，
+不要再启动独立的 `stable_target_node`。启动任务节点：
+
+```bash
+ros2 run apriltag_block_grasp manipulation_task_node
+```
+
+分别监听状态和结果：
+
+```bash
+ros2 topic echo --full-length \
+  /apriltag_grasp/task_state std_msgs/msg/String
+
+ros2 topic echo --full-length \
+  /apriltag_grasp/task_result std_msgs/msg/String
+```
+
+发送一次定位测试命令：
+
+```bash
+ros2 topic pub --once /apriltag_grasp/task_cmd std_msgs/msg/String \
+  "{data: '{\"task_id\":101,\"cmd\":\"pick\"}'}"
+```
+
+正常目标最终应发布：
+
+```text
+state=snapshot_ready
+result=target_snapshot_ready
+selected_tag_id=0 或 1
+pick_motion_executed=false
+motion_commands_enabled=false
+```
+
+无标签时，命令发出约 3 秒后应发布 `result=localization_failed`、
+`reason=target_not_found`。若看到标签但无法在 3 秒内稳定，应为 `reason=target_unstable`。
+
+并发规则：活动任务期间重复发送相同 `task_id` 的 `pick` 时，状态报告
+`duplicate_active_pick`，原任务继续；发送不同 `task_id` 时，新命令结果为
+`task_rejected/arm_busy`，原任务仍继续。当前任务产生终态后，下一条新 `pick` 会清空上一次
+锁定和采样窗口并开始独立定位。节点重启会清空全部内存状态。
+
 ### 单次笛卡尔 XYZ 小步安全工具
 
 `move_cartesian_fixed_orientation_safe` 用一条 RoArm-M3 `T=1041` 命令验证 XYZ 小步运动。

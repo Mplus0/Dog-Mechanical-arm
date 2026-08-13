@@ -1,8 +1,10 @@
 """Pure target selection and consecutive XYZ stability logic."""
 
 import math
+import json
 import statistics
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
@@ -36,6 +38,22 @@ class TargetStabilityConfig:
                 raise ValueError(f"{name} must be positive and finite")
 
 
+def load_target_stability_config(path: str) -> TargetStabilityConfig:
+    """Load validated stability parameters without importing ROS modules."""
+    with Path(path).open("r", encoding="utf-8") as stream:
+        data = json.load(stream)
+    return TargetStabilityConfig(
+        selection_order=tuple(int(value) for value in data["selection_order"]),
+        stable_frame_count=int(data["stable_frame_count"]),
+        xyz_peak_to_peak_threshold_mm=tuple(
+            float(value) for value in data["xyz_peak_to_peak_threshold_mm"]
+        ),
+        stable_timeout_s=float(data["stable_timeout_s"]),
+        max_pnp_arm_stamp_delta_s=float(data["max_pnp_arm_stamp_delta_s"]),
+        max_arm_state_reported_age_s=float(data["max_arm_state_reported_age_s"]),
+    )
+
+
 class StableTargetLock:
     """Lock one visible ID and build an immutable median XYZ snapshot.
 
@@ -60,6 +78,30 @@ class StableTargetLock:
         self.best_xyz_peak_to_peak_mm: Optional[Tuple[float, float, float]] = None
         self.best_max_threshold_ratio: Optional[float] = None
         self.terminal_result: Optional[Dict[str, Any]] = None
+
+    def start(self, now_s: float) -> None:
+        """Start the timeout clock before the first candidate message arrives."""
+        if not math.isfinite(now_s):
+            raise ValueError("now_s must be finite")
+        if self.attempt_started_s is None:
+            self.attempt_started_s = now_s
+
+    def check_timeout(self, now_s: float) -> Optional[Dict[str, Any]]:
+        """Return a terminal timeout result, including when no input arrives."""
+        if self.terminal_result is not None:
+            return dict(self.terminal_result)
+        if self.attempt_started_s is None:
+            return None
+        if not math.isfinite(now_s):
+            raise ValueError("now_s must be finite")
+        if now_s - self.attempt_started_s < self.config.stable_timeout_s:
+            return None
+        detail = (
+            "xyz_peak_to_peak_exceeded"
+            if self.last_xyz_peak_to_peak_mm is not None
+            else "candidate_message_timeout"
+        )
+        return self._terminal_failure(now_s, detail)
 
     @staticmethod
     def _finite_float(value: Any) -> Optional[float]:
@@ -172,8 +214,7 @@ class StableTargetLock:
             return dict(self.terminal_result)
         if not math.isfinite(now_s):
             raise ValueError("now_s must be finite")
-        if self.attempt_started_s is None:
-            self.attempt_started_s = now_s
+        self.start(now_s)
 
         gate_valid, gate_reason = self._message_gate(payload)
         visible_candidates = self._candidate_map(payload)

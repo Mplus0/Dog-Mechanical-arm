@@ -166,6 +166,17 @@ std_msgs/msg/String
 {"task_id": 101, "cmd": "pick"}
 ```
 
+包内任务状态和结果接口确认为：
+
+```text
+/apriltag_grasp/task_state
+/apriltag_grasp/task_result
+std_msgs/msg/String + JSON
+```
+
+上述三个 `/apriltag_grasp/*` topic 仅用于新包内部编排和独立开发测试。后续机器狗使用的
+`/dog_arm/*` topic 仍由独立 ROS1/ROS2 适配层处理，不直接写入定位或抓取核心。
+
 不增加 `abort`、`reset_cycle`、`status` 或 `home` 命令。
 
 ### 5.3 `roarm_driver_node`
