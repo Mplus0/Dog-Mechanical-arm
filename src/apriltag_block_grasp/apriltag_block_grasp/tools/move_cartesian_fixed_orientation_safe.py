@@ -206,17 +206,6 @@ def main() -> int:
         target_xyz = [current_xyz[i] + deltas[i] for i in range(3)]
         pitch_change_deg = math.degrees(target_pitch - current_pitch)
         roll_change_deg = math.degrees(target_roll - current_roll)
-        if abs(pitch_change_deg) > max_pitch_change_deg:
-            raise ValueError(
-                f"calibrated pitch change {pitch_change_deg:.3f} deg exceeds "
-                f"max_pitch_change_deg={max_pitch_change_deg:.3f}"
-            )
-        if abs(roll_change_deg) > max_roll_change_deg:
-            raise ValueError(
-                f"calibrated roll change {roll_change_deg:.3f} deg exceeds "
-                f"max_roll_change_deg={max_roll_change_deg:.3f}"
-            )
-
         command = controller.build_cartesian_command(
             x_mm=target_xyz[0],
             y_mm=target_xyz[1],
@@ -243,6 +232,16 @@ def main() -> int:
                 "planned_command": command,
             }
         )
+        if abs(pitch_change_deg) > max_pitch_change_deg:
+            raise ValueError(
+                f"calibrated pitch change {pitch_change_deg:.3f} deg exceeds "
+                f"max_pitch_change_deg={max_pitch_change_deg:.3f}"
+            )
+        if abs(roll_change_deg) > max_roll_change_deg:
+            raise ValueError(
+                f"calibrated roll change {roll_change_deg:.3f} deg exceeds "
+                f"max_roll_change_deg={max_roll_change_deg:.3f}"
+            )
 
         if not args.enable_motion:
             report["summary"] = {
