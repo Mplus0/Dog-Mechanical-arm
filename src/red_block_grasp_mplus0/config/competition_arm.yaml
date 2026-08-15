@@ -9,6 +9,21 @@ competition_arm_task_node:
     place_timeout_s: 60.0
     base_adjust_step_m: 0.05
 
+dog_arm_tcp_server:
+  ros__parameters:
+    bind_host: "192.168.31.56"
+    allowed_client_ip: "192.168.31.192"
+    server_port: 47001
+    shared_secret_file: "~/.ros/dog_arm_shared_secret"
+    heartbeat_interval: 1.0
+    heartbeat_timeout: 5.0
+    outbound_ttl: 300.0
+    task_cmd_topic: "/dog_arm/task_cmd"
+    task_result_topic: "/dog_arm/task_result"
+    base_adjust_req_topic: "/dog_arm/base_adjust_req"
+    connected_topic: "/dog_arm/transport_connected"
+    status_topic: "/dog_arm/transport_status"
+
 visual_servo_task_node:
   ros__parameters:
     competition_mode: true

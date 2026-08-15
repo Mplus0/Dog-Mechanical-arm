@@ -8,6 +8,7 @@ from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -25,6 +26,11 @@ def generate_launch_description():
     move_speed = LaunchConfiguration("move_speed")
     step_wait_s = LaunchConfiguration("step_wait_s")
     servo_min_z_mm = LaunchConfiguration("servo_min_z_mm")
+    enable_tcp_transport = LaunchConfiguration("enable_tcp_transport")
+    tcp_bind_host = LaunchConfiguration("tcp_bind_host")
+    tcp_allowed_client_ip = LaunchConfiguration("tcp_allowed_client_ip")
+    tcp_port = LaunchConfiguration("tcp_port")
+    tcp_shared_secret_file = LaunchConfiguration("tcp_shared_secret_file")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -44,6 +50,31 @@ def generate_launch_description():
         DeclareLaunchArgument("move_speed", default_value="0.12"),
         DeclareLaunchArgument("step_wait_s", default_value="0.8"),
         DeclareLaunchArgument("servo_min_z_mm", default_value="110.0"),
+        DeclareLaunchArgument("enable_tcp_transport", default_value="true"),
+        DeclareLaunchArgument("tcp_bind_host", default_value="192.168.31.56"),
+        DeclareLaunchArgument("tcp_allowed_client_ip", default_value="192.168.31.192"),
+        DeclareLaunchArgument("tcp_port", default_value="47001"),
+        DeclareLaunchArgument(
+            "tcp_shared_secret_file",
+            default_value=os.path.expanduser("~/.ros/dog_arm_shared_secret"),
+        ),
+
+        Node(
+            package="red_block_grasp_mplus0",
+            executable="dog_arm_tcp_server_node",
+            name="dog_arm_tcp_server",
+            output="screen",
+            condition=IfCondition(enable_tcp_transport),
+            parameters=[
+                competition_config,
+                {
+                    "bind_host": tcp_bind_host,
+                    "allowed_client_ip": tcp_allowed_client_ip,
+                    "server_port": ParameterValue(tcp_port, value_type=int),
+                    "shared_secret_file": tcp_shared_secret_file,
+                },
+            ],
+        ),
 
         Node(
             package="red_block_grasp_mplus0",
