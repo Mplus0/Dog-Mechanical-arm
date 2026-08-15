@@ -66,7 +66,7 @@
 cd /home/sunrise/dog/ros2_red_block_ws
 git pull
 colcon build --packages-select red_block_grasp_mplus0 --event-handlers console_direct+
-source source_red_block.sh
+source install/setup.bash
 ros2 launch red_block_grasp_mplus0 visual_servo_task.launch.py show_window:=true
 ```
 
@@ -339,18 +339,24 @@ SAVE
 - `pick`：识别红色长条/红色目标，执行视觉伺服靠近、下降、闭爪、抬升，并在抬升后悬空保持 `hold_after_pick_s`（默认 3.2 秒）以上。收到 `pick_success` 表示物料已经抓起、抬升并保持完成。
 - `place_to_zone`：不识别 A/B/C/D，也不识别箱子。默认机械狗已经移动到正确放置箱前并站稳，机械臂执行固定放置点移动、开爪、等待、回安全/初始姿态。收到 `place_success` 表示已经开爪放置并回到安全姿态。
 
-机械狗侧负责移动到抓取区/放置区并站稳；ROS1 bridge 暂时不做，等 ROS2 内部测试稳定后再接。
+机械狗侧负责移动到抓取区/放置区并站稳。跨机通信已采用全双工 TCP：机器狗 ROS1 端运行 TCP 客户端，本功能包在机械臂 ROS2 端运行 TCP 服务端，不使用 `ros1_bridge`。客户端/服务端只表示建连方向，任务结果和底盘微调请求会沿同一连接回传。
 
 启动比赛机械臂侧：
 
 ```bash
 cd /home/sunrise/dog/ros2_red_block_ws
 colcon build --packages-select red_block_grasp_mplus0 --event-handlers console_direct+
-source source_red_block.sh
-ros2 launch red_block_grasp_mplus0 competition_arm_task.launch.py show_window:=false
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch red_block_grasp_mplus0 competition_arm_task.launch.py \
+  show_window:=false \
+  tcp_bind_host:=192.168.31.56 \
+  tcp_allowed_client_ip:=192.168.31.192
 ```
 
-狗端/测试端发送任务：
+完整 launch 默认启动 `dog_arm_tcp_server_node`，端口为 `47001`。两端必须准备内容相同、权限为 `600` 的 `~/.ros/dog_arm_shared_secret`；详细说明见 [`docs/dog_arm_tcp_transport.md`](docs/dog_arm_tcp_transport.md)。IP 改变时只覆盖上面的 launch 参数。
+
+以下 `ros2 topic` 命令只用于机械臂主机内部测试，不是跨机通信的启动方法：
 
 ```bash
 ros2 topic pub --once /dog_arm/task_cmd std_msgs/msg/String "{data: '{\"task_id\":1,\"cmd\":\"pick\"}'}"
