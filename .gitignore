@@ -13,6 +13,7 @@ __pycache__/
 hard_samples/
 run_records/
 runs/
+place_pose.yaml.bak.*
 *.bag
 *.db3
 *.avi

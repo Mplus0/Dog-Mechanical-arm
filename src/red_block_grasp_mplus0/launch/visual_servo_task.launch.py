@@ -12,6 +12,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     pkg_share = get_package_share_directory("red_block_grasp_mplus0")
+    place_pose_config = os.path.join(pkg_share, "config", "place_pose.yaml")
     model_path = LaunchConfiguration("model_path")
     handeye_path = LaunchConfiguration("handeye_path")
     arm_port = LaunchConfiguration("arm_port")
@@ -235,12 +236,10 @@ def generate_launch_description():
                     "lift_up_mm": 80.0,
                     "lift_speed": 0.08,
                     "lift_wait_s": 2.0,
-                    "place_x_mm": 260.0,
-                    "place_y_mm": 180.0,
-                    "place_z_mm": 120.0,
                     "place_speed": 0.10,
                     "place_wait_s": 2.0,
-                }
+                },
+                place_pose_config,
             ],
         ),
 

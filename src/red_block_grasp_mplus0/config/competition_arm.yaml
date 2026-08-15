@@ -33,6 +33,3 @@ visual_servo_task_node:
     base_adjust_step_m: 0.05
     base_adjust_y_margin_mm: 40.0
     base_adjust_y_threshold_mm: 260.0
-    place_x_mm: 260.0
-    place_y_mm: 180.0
-    place_z_mm: 120.0

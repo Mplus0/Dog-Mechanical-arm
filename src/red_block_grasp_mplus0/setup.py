@@ -34,6 +34,7 @@ setup(
             "open_loop_grasp_task_node = red_block_grasp_mplus0.nodes.open_loop_grasp_task_node:main",
             "execution_logger_node = red_block_grasp_mplus0.nodes.execution_logger_node:main",
             "calibrate_red_threshold = red_block_grasp_mplus0.tools.calibrate_red_threshold:main",
+            "calibrate_place_pose = red_block_grasp_mplus0.tools.calibrate_place_pose:main",
         ],
     },
 )

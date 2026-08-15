@@ -276,6 +276,49 @@ ros2 launch red_block_grasp_mplus0 visual_servo_task.launch.py --show-args
 4. 用较小的 `descend_test_mm` 先验证下降方向。
 5. 下降稳定后，再启用 `enable_pick_place_sequence:=true` 测试闭爪、抬升和放置。
 
+## 固定放置坐标现场标定
+
+`place_to_zone` 不使用相机识别或放置标识，仍按原状态机移动到机械臂 base 坐标系中的固定 XYZ，再开爪和回初始位。默认坐标统一保存在：
+
+```text
+src/red_block_grasp_mplus0/config/place_pose.yaml
+```
+
+现场标定工具只订阅 `/roarm_m3/state`，不创建 `/roarm_m3/cmd` 发布器，因此不会自行移动机械臂或开合夹爪。标定时不要启动视觉伺服或比赛 launch，避免其他节点发送动作。
+
+终端 1 只启动驱动和状态反馈：
+
+```bash
+cd /home/sunrise/dog/ros2_red_block_ws
+source install/setup.bash
+ros2 run red_block_grasp_mplus0 roarm_driver_node --ros-args -p port:=/dev/ttyUSB0
+```
+
+终端 2 启动只读标定工具：
+
+```bash
+cd /home/sunrise/dog/ros2_red_block_ws
+source install/setup.bash
+ros2 run red_block_grasp_mplus0 calibrate_place_pose
+```
+
+用已验证的网页/手动控制方式把末端移到放置位，在脚本中依次输入：
+
+```text
+status
+live 5
+capture
+show
+save
+SAVE
+```
+
+- `capture` 将最新的有效 XYZ 记为候选放置点。
+- `set X Y Z` 可手动输入候选点，`nudge x|y|z DELTA_MM` 可小幅修正单轴。
+- `save` 还需要二次输入大写 `SAVE`；保存前会检查有限数和工作空间范围。
+- 保存时会在同目录生成带时间戳的 `.bak.*` 备份，不会修改抓取坐标或状态机代码。
+- 标定后需重新构建并重启 launch，新坐标才会被加载。
+
 ## Git 注意事项
 
 不要提交运行产物和训练产物：

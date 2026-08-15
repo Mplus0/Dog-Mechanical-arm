@@ -14,6 +14,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 def generate_launch_description():
     pkg_share = get_package_share_directory("red_block_grasp_mplus0")
     competition_config = os.path.join(pkg_share, "config", "competition_arm.yaml")
+    place_pose_config = os.path.join(pkg_share, "config", "place_pose.yaml")
 
     model_path = LaunchConfiguration("model_path")
     handeye_path = LaunchConfiguration("handeye_path")
@@ -200,6 +201,7 @@ def generate_launch_description():
                     "place_speed": 0.10,
                     "place_wait_s": 2.0,
                 },
+                place_pose_config,
             ],
         ),
 

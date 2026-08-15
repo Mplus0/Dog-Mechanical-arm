@@ -1,0 +1,6 @@
+visual_servo_task_node:
+  ros__parameters:
+    # Fixed placement pose in the RoArm-M3 base frame (millimetres).
+    place_x_mm: 260.0
+    place_y_mm: 180.0
+    place_z_mm: 120.0
