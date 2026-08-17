@@ -53,7 +53,7 @@ def generate_launch_description():
         DeclareLaunchArgument("servo_min_z_mm", default_value="110.0"),
         DeclareLaunchArgument("enable_tcp_transport", default_value="true"),
         DeclareLaunchArgument("tcp_bind_host", default_value="192.168.31.56"),
-        DeclareLaunchArgument("tcp_allowed_client_ip", default_value="192.168.31.192"),
+        DeclareLaunchArgument("tcp_allowed_client_ip", default_value="192.168.31.83"),
         DeclareLaunchArgument("tcp_port", default_value="47001"),
         DeclareLaunchArgument(
             "tcp_shared_secret_file",
